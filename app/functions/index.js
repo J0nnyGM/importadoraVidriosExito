@@ -1,47 +1,35 @@
-/**
- * Este es el código para tus Firebase Functions.
- * Debes desplegarlo usando Firebase CLI.
- */
+// functions/index.js (Versión con Permisos de Inventario)
+
 const functions = require("firebase-functions");
-const cors = require("cors")({ origin: true });
 const admin = require("firebase-admin");
 const sgMail = require("@sendgrid/mail");
 const { jsPDF } = require("jspdf");
 require("jspdf-autotable");
-const axios = require("axios"); // Importar axios
+const axios = require("axios");
 
 admin.initializeApp();
 
-// **** INICIO DE LA NUEVA FUNCIÓN ****
-/**
- * Se activa cuando un nuevo usuario se crea en Firebase Authentication.
- * Revisa si es el primer usuario y, si es así, le asigna el rol de 'admin' y lo activa.
- */
 exports.onUserCreate = functions.auth.user().onCreate(async (user) => {
     const usersCollection = admin.firestore().collection("users");
-
-    // Revisa cuántos documentos hay en la colección de usuarios.
     const snapshot = await usersCollection.limit(2).get();
 
-    // Si solo hay 1 documento (el que se acaba de crear en el app.js), es el primer usuario.
     if (snapshot.size === 1) {
         functions.logger.log(`Asignando rol de 'admin' y estado 'active' al primer usuario: ${user.uid}`);
-        // Actualiza el documento del usuario para cambiar su rol y estado.
+        // **** PERMISO AÑADIDO PARA ADMIN ****
         return usersCollection.doc(user.uid).update({
             role: "admin",
             status: "active",
             "permissions.facturacion": true,
             "permissions.clientes": true,
-            "permissions.items": true,
-            "permissions.colores": true,
             "permissions.gastos": true,
             "permissions.proveedores": true,
             "permissions.empleados": true,
+            "permissions.inventario": true // <-- AÑADIDO
         });
     }
 
     functions.logger.log(`El nuevo usuario ${user.uid} se ha registrado con rol 'planta' y estado 'pending'.`);
-    return null; // No hace nada para los siguientes usuarios.
+    return null;
 });
 
 // Configurar SendGrid
@@ -53,7 +41,7 @@ sgMail.setApiKey(SENDGRID_API_KEY);
 const WHATSAPP_TOKEN = functions.config().whatsapp.token;
 const WHATSAPP_PHONE_NUMBER_ID = functions.config().whatsapp.phone_number_id;
 
-const BUCKET_NAME = "prismacolorsas.firebasestorage.app";
+const BUCKET_NAME = "importadorave-7d1a0.firebasestorage.app";
 
 // **** INICIO DE LA NUEVA FUNCIÓN ****
 /**
@@ -236,7 +224,6 @@ async function sendWhatsAppRemision(toPhoneNumber, customerName, remisionNumber,
  * @return {Buffer} El PDF como un buffer de datos.
  */
 function generarPDF(remision, isForPlanta = false) {
-    // eslint-disable-next-line new-cap
     const doc = new jsPDF();
 
     doc.setFontSize(20);
@@ -288,13 +275,14 @@ function generarPDF(remision, isForPlanta = false) {
     doc.setFont("helvetica", "normal");
     doc.text(remision.fechaEntrega || "Pendiente", 165, 61);
 
-    let tableColumn = ["Referencia", "Descripción", "Color", "Cant."];
-    if (!isForPlanta) {
+    let tableColumn = ["Referencia", "Descripción", "Cant."];
+        if (!isForPlanta) {
         tableColumn.push("Vlr. Unit.", "Subtotal");
     }
 
     const tableRows = remision.items.map((item) => {
-        const row = [item.referencia, item.descripcion, item.color, item.cantidad];
+        // Se elimina item.color de la fila
+        const row = [item.referencia, item.descripcion, item.cantidad];
         if (!isForPlanta) {
             row.push(formatCurrency(item.valorUnitario), formatCurrency(item.cantidad * item.valorUnitario));
         }
@@ -348,15 +336,12 @@ function generarPDF(remision, isForPlanta = false) {
     }
 
     // Signature Line
-    yPos = Math.max(yPos, finalY + 20); // Ensure there's enough space after the table
-    yPos = 250; // Set a fixed position for the signature line
-    doc.line(40, yPos, 120, yPos); // Draw the line for signature
+    yPos = 250;
+    doc.line(40, yPos, 120, yPos);
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
     doc.text("Firma y Sello de Recibido", 75, yPos + 5, { align: "center" });
 
-
-    // Footer Note
     doc.setLineCap(2);
     doc.line(20, 270, 190, 270);
     const footerText1 = "NO SE ENTREGA TRABAJO SINO HA SIDO CANCELADO.";
@@ -368,6 +353,7 @@ function generarPDF(remision, isForPlanta = false) {
 
     return Buffer.from(doc.output("arraybuffer"));
 }
+
 
 exports.onRemisionCreate = functions.region("us-central1").firestore
     .document("remisiones/{remisionId}")

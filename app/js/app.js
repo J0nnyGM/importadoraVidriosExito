@@ -1,21 +1,21 @@
-// js/app.js (Versión Completa y Final)
+// js/app.js (Versión Definitiva con Corrección en el Manejo de Formularios Dinámicos)
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateEmail } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, setDoc, getDoc, getDocs, query, orderBy, onSnapshot, deleteDoc, updateDoc, addDoc, runTransaction, arrayUnion, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, query, orderBy, onSnapshot, deleteDoc, updateDoc, addDoc, runTransaction, arrayUnion, where, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { getAnalytics, logEvent } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js";
 
 // --- INICIALIZACIÓN Y CONFIGURACIÓN ---
 const firebaseConfig = {
-    apiKey: "AIzaSyAOeIv-PnETZIs5NFrsxsBnqf2_Gt6hbKM",
-    authDomain: "prismacolorsas.firebaseapp.com",
-    storageBucket: "prismacolorsas.firebasestorage.app",
-    projectId: "prismacolorsas",
-    messagingSenderId: "907757501037",
-    appId: "1:907757501037:web:ab61eb771e12add9a29d64",
-    measurementId: "G-T2RKG90GC5"
+    apiKey: "AIzaSyC3cAvG47JSR7fNc5YbBisG7BxJhfLQxRg",
+    authDomain: "importadorave-7d1a0.firebaseapp.com",
+    projectId: "importadorave-7d1a0",
+    storageBucket: "importadorave-7d1a0.firebasestorage.app",
+    messagingSenderId: "14979091937",
+    appId: "1:14979091937:web:b415c75ada1fe0e688d6a0",
+    measurementId: "G-EDX2L0J4Z0"
 };
 let app, auth, db, storage, functions, analytics;
 try {
@@ -24,7 +24,7 @@ try {
     db = getFirestore(app);
     storage = getStorage(app);
     functions = getFunctions(app, 'us-central1');
-    analytics = getAnalytics(app); // Inicializa Analytics
+    analytics = getAnalytics(app);
 } catch (e) {
     console.error("Error al inicializar Firebase.", e);
     document.body.innerHTML = `<h1>Error Crítico: No se pudo inicializar la aplicación.</h1>`;
@@ -39,14 +39,18 @@ const loginForm = document.getElementById('login-form');
 const registerForm = document.getElementById('register-form');
 let currentUser = null;
 let currentUserData = null;
-let allItems = [], allColores = [], allClientes = [], allProveedores = [], allGastos = [], allRemisiones = [], allUsers = [], allPendingLoans = [], profitLossChart = null;
+let allClientes = [], allProveedores = [], allGastos = [], allRemisiones = [], allUsers = [], allPendingLoans = [], allImportaciones = [], profitLossChart = null;
 let dynamicElementCounter = 0;
-let isRegistering = false; // <-- Variable de "cerradura" para el registro
+let isRegistering = false;
 const ESTADOS_REMISION = ['Recibido', 'En Proceso', 'Procesado', 'Entregado'];
-const ALL_MODULES = ['remisiones', 'facturacion', 'clientes', 'items', 'colores', 'gastos', 'proveedores', 'prestamos', 'empleados'];
+const ALL_MODULES = ['remisiones', 'facturacion', 'inventario', 'clientes', 'gastos', 'proveedores', 'prestamos', 'empleados'];
 const RRHH_DOCUMENT_TYPES = [
     { id: 'contrato', name: 'Contrato' }, { id: 'hojaDeVida', name: 'Hoja de Vida' }, { id: 'examenMedico', name: 'Examen Médico' }, { id: 'cedula', name: 'Cédula (PDF)' }, { id: 'certificadoARL', name: 'Certificado ARL' }, { id: 'certificadoEPS', name: 'Certificado EPS' }, { id: 'certificadoAFP', name: 'Certificado AFP' }, { id: 'cartaRetiro', name: 'Carta de renuncia o despido' }, { id: 'liquidacionDoc', name: 'Liquidación' },
 ];
+const GASTOS_IMPORTACION = [
+    { id: 'pi', name: 'PI' }, { id: 'factura', name: 'Factura' }, { id: 'packingList', name: 'Packing List' }, { id: 'gastosNaviera', name: 'Gastos Naviera' }, { id: 'gastosPuerto', name: 'Gastos Puerto' }, { id: 'gastosAduana', name: 'Gastos Aduana' }, { id: 'dropOff', name: 'Drop Off' }, { id: 'gastosTransporte', name: 'Gastos Transporte' }, { id: 'gastosMontacarga', name: 'Gastos Montacarga' }
+];
+
 // --- MANEJO DE AUTENTICACIÓN Y VISTAS ---
 let activeListeners = [];
 function unsubscribeAllListeners() {
@@ -54,28 +58,24 @@ function unsubscribeAllListeners() {
     activeListeners = [];
 }
 
-
+let isAppInitialized = false;
 
 onAuthStateChanged(auth, async (user) => {
     unsubscribeAllListeners();
     if (user) {
-        currentUser = user;
         const userDoc = await getDoc(doc(db, "users", user.uid));
         if (userDoc.exists()) {
+            currentUser = user;
             currentUserData = { id: user.uid, ...userDoc.data() };
             if (currentUserData.status === 'active') {
                 document.getElementById('user-info').textContent = `Usuario: ${currentUserData.nombre} (${currentUserData.role})`;
-                // Registrar evento de inicio de sesión en Analytics
-                logEvent(analytics, 'login', {
-                    method: 'email',
-                    user_role: currentUserData.role // Puedes añadir datos personalizados
-                });
+                logEvent(analytics, 'login', { method: 'email', user_role: currentUserData.role });
                 authView.classList.add('hidden');
                 deniedView.classList.add('hidden');
                 appView.classList.remove('hidden');
                 startApp();
             } else {
-                let message = "Tu cuenta está pendiente de aprobación por un administrador.";
+                let message = "Tu cuenta está pendiente de aprobación.";
                 if (currentUserData.status === 'inactive') message = "Tu cuenta ha sido desactivada temporalmente.";
                 if (currentUserData.status === 'archived') message = "Tu cuenta ha sido archivada y no puedes acceder.";
                 document.getElementById('denied-message').textContent = message;
@@ -96,44 +96,35 @@ onAuthStateChanged(auth, async (user) => {
     }
 });
 
-// Listeners para los elementos que siempre están presentes
-document.getElementById('logout-denied-user').addEventListener('click', () => signOut(auth));
-document.getElementById('show-register-link').addEventListener('click', (e) => { e.preventDefault(); loginForm.classList.add('hidden'); registerForm.classList.remove('hidden'); });
-document.getElementById('show-login-link').addEventListener('click', (e) => { e.preventDefault(); registerForm.classList.add('hidden'); loginForm.classList.remove('hidden'); });
-loginForm.addEventListener('submit', handleLoginSubmit);
-registerForm.addEventListener('submit', handleRegisterSubmit);
+
+// --- INICIALIZACIÓN DEL SCRIPT ---
+document.addEventListener('DOMContentLoaded', () => {
+    loadViewTemplates();
+    loginForm.addEventListener('submit', handleLoginSubmit);
+    registerForm.addEventListener('submit', handleRegisterSubmit);
+    document.getElementById('show-register-link').addEventListener('click', (e) => { e.preventDefault(); loginForm.classList.add('hidden'); registerForm.classList.remove('hidden'); });
+    document.getElementById('logout-denied-user').addEventListener('click', () => signOut(auth));
+});
 
 
-// --- LÓGICA DE INICIALIZACIÓN DE LA APP ---
-let isAppInitialized = false;
+// --- LÓGICA DE LA APLICACIÓN ---
 function startApp() {
     if (isAppInitialized) return;
-
-    // 1. Crear toda la estructura HTML de las vistas
-    loadViewTemplates();
-
-    // 2. Actualizar la visibilidad basada en el rol del usuario
     updateUIVisibility(currentUserData);
-
-    // 3. Añadir todos los event listeners a los elementos que ya existen
     setupEventListeners();
-
-    // 4. Empezar a cargar los datos desde Firebase
     loadAllData();
-
-    // 5. Inicializar los buscadores interactivos AHORA que todo está listo
     setupSearchInputs();
-
     isAppInitialized = true;
 }
 
+
+// --- LÓGICA DE CARGA DE DATOS ---
 function loadAllData() {
     activeListeners.push(loadClientes());
     activeListeners.push(loadProveedores());
-    activeListeners.push(loadItems());
-    activeListeners.push(loadColores());
     activeListeners.push(loadRemisiones());
     activeListeners.push(loadGastos());
+    activeListeners.push(loadImportaciones());
     if (currentUserData && currentUserData.role === 'admin') {
         activeListeners.push(loadEmpleados());
         activeListeners.push(loadAllLoanRequests());
@@ -151,62 +142,52 @@ function loadViewTemplates() {
             <input type="email" id="register-email" placeholder="Correo Electrónico" class="w-full p-3 border border-gray-300 rounded-lg" required>
             <input type="password" id="register-password" placeholder="Contraseña (mín. 6 caracteres)" class="w-full p-3 border border-gray-300 rounded-lg" required>
             <div><label for="register-dob" class="block text-sm font-medium text-gray-700">Fecha de Nacimiento</label><input type="date" id="register-dob" class="w-full p-3 border border-gray-300 rounded-lg mt-1" required></div>
-            
             <div class="flex items-center space-x-2">
                 <input type="checkbox" id="register-politica" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" required>
                 <label for="register-politica" class="text-sm text-gray-600">
                     Acepto la <a href="#" id="show-policy-link" class="font-semibold text-indigo-600 hover:underline">Política de Tratamiento de Datos</a>.
                 </label>
             </div>
-
             <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700">Registrarse</button>
         </div>
         <p class="text-center mt-4 text-sm">¿Ya tienes una cuenta? <a href="#" id="show-login-link-register" class="font-semibold text-indigo-600 hover:underline">Inicia sesión</a></p>
     `;
+    document.getElementById('show-login-link-register').addEventListener('click', (e) => { e.preventDefault(); registerForm.classList.add('hidden'); loginForm.classList.remove('hidden'); });
+    
+    document.getElementById('view-inventario').innerHTML = `
+        <div class="bg-white p-6 rounded-xl shadow-md max-w-6xl mx-auto">
+            <div class="flex flex-col sm:flex-row justify-between sm:items-center mb-6 gap-4">
+                <h2 class="text-2xl font-semibold">Gestión de Importaciones</h2>
+                <button id="add-importacion-btn" class="w-full sm:w-auto bg-blue-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-blue-700 transition">
+                    + Nueva Importación
+                </button>
+            </div>
+            <div id="importaciones-list" class="space-y-4"></div>
+        </div>`;
+    // Se añade el listener para el enlace recién creado
+    document.getElementById('show-login-link-register').addEventListener('click', (e) => { e.preventDefault(); registerForm.classList.add('hidden'); loginForm.classList.remove('hidden'); });
+
     document.getElementById('view-remisiones').innerHTML = `<div class="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-6xl mx-auto"><div id="remision-form-container" class="lg:col-span-1 bg-white p-6 rounded-xl shadow-md"><h2 class="text-xl font-semibold mb-4">Nueva Remisión</h2><form id="remision-form" class="space-y-4"><div class="relative"><input type="text" id="cliente-search-input" autocomplete="off" placeholder="Buscar y seleccionar cliente..." class="w-full p-3 border border-gray-300 rounded-lg" required><input type="hidden" id="cliente-id-hidden" name="clienteId"><div id="cliente-search-results" class="search-results hidden"></div></div><div><label for="fecha-recibido" class="block text-sm font-medium text-gray-700">Fecha Recibido</label><input type="date" id="fecha-recibido" class="w-full p-3 border border-gray-300 rounded-lg mt-1 bg-gray-100" readonly></div><div class="border-t border-b border-gray-200 py-4"><h3 class="text-lg font-semibold mb-2">Ítems de la Remisión</h3><div id="items-container" class="space-y-4"></div><button type="button" id="add-item-btn" class="mt-4 w-full bg-gray-200 text-gray-700 font-semibold py-2 px-4 rounded-lg hover:bg-gray-300 transition-colors">+ Añadir Ítem</button></div><select id="forma-pago" class="w-full p-3 border border-gray-300 rounded-lg bg-white" required><option value="" disabled selected>Forma de Pago</option><option value="Pendiente">Pendiente</option><option value="Efectivo">Efectivo</option><option value="Nequi">Nequi</option><option value="Davivienda">Davivienda</option></select><div class="bg-gray-50 p-4 rounded-lg space-y-2"><div class="flex justify-between items-center"><span class="font-medium">Subtotal:</span><span id="subtotal" class="font-bold text-lg">$ 0</span></div><div class="flex justify-between items-center"><label for="incluir-iva" class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="incluir-iva" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"><span>Incluir IVA (19%)</span></label><span id="valor-iva" class="font-medium text-gray-600">$ 0</span></div><hr><div class="flex justify-between items-center text-xl"><span class="font-bold">TOTAL:</span><span id="valor-total" class="font-bold text-indigo-600">$ 0</span></div></div><button type="submit" class="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors">Guardar Remisión</button></form></div><div id="remisiones-list-container" class="lg:col-span-2 bg-white p-6 rounded-xl shadow-md"><div class="flex flex-col sm:flex-row justify-between sm:items-center mb-4 flex-wrap gap-4"><h2 class="text-xl font-semibold">Historial de Remisiones</h2><div class="flex items-center gap-2 flex-wrap w-full"><select id="filter-remisiones-month" class="p-2 border rounded-lg bg-white"></select><select id="filter-remisiones-year" class="p-2 border rounded-lg bg-white"></select><input type="search" id="search-remisiones" placeholder="Buscar..." class="p-2 border rounded-lg flex-grow"></div></div><div id="remisiones-list" class="space-y-3"></div></div></div>`;
     document.getElementById('view-facturacion').innerHTML = `<div class="bg-white p-6 rounded-xl shadow-md max-w-6xl mx-auto"><h2 class="text-2xl font-semibold mb-4">Gestión de Facturación</h2><div class="border-b border-gray-200 mb-6"><nav id="facturacion-nav" class="-mb-px flex space-x-6"><button id="tab-pendientes" class="dashboard-tab-btn active py-3 px-1 font-semibold">Pendientes</button><button id="tab-realizadas" class="dashboard-tab-btn py-3 px-1 font-semibold">Realizadas</button></nav></div><div id="view-pendientes"><h3 class="text-xl font-semibold text-gray-800 mb-4">Remisiones Pendientes de Facturar</h3><div id="facturacion-pendientes-list" class="space-y-3"></div></div><div id="view-realizadas" class="hidden"><h3 class="text-xl font-semibold text-gray-800 mb-4">Remisiones Facturadas</h3><div id="facturacion-realizadas-list" class="space-y-3"></div></div></div>`;
     document.getElementById('view-clientes').innerHTML = `<div class="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-6xl mx-auto"><div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-md"><h2 class="text-xl font-semibold mb-4">Añadir Cliente</h2><form id="add-cliente-form" class="space-y-4"><input type="text" id="nuevo-cliente-nombre" placeholder="Nombre Completo" class="w-full p-3 border border-gray-300 rounded-lg" required><input type="email" id="nuevo-cliente-email" placeholder="Correo" class="w-full p-3 border border-gray-300 rounded-lg" required><input type="tel" id="nuevo-cliente-telefono1" placeholder="Teléfono 1" class="w-full p-3 border border-gray-300 rounded-lg" required><input type="tel" id="nuevo-cliente-telefono2" placeholder="Teléfono 2 (Opcional)" class="w-full p-3 border border-gray-300 rounded-lg"><input type="text" id="nuevo-cliente-nit" placeholder="NIT (Opcional)" class="w-full p-3 border border-gray-300 rounded-lg"><button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700">Registrar</button></form></div><div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-md"><div class="flex justify-between items-center mb-4"><h2 class="text-xl font-semibold">Clientes</h2><input type="search" id="search-clientes" placeholder="Buscar..." class="p-2 border rounded-lg"></div><div id="clientes-list" class="space-y-3"></div></div></div>`;
     document.getElementById('view-proveedores').innerHTML = `<div class="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-6xl mx-auto"><div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-md"><h2 class="text-xl font-semibold mb-4">Añadir Proveedor</h2><form id="add-proveedor-form" class="space-y-4"><input type="text" id="nuevo-proveedor-nombre" placeholder="Nombre del Proveedor" class="w-full p-3 border border-gray-300 rounded-lg" required><input type="text" id="nuevo-proveedor-contacto" placeholder="Nombre de Contacto" class="w-full p-3 border border-gray-300 rounded-lg"><input type="tel" id="nuevo-proveedor-telefono" placeholder="Teléfono" class="w-full p-3 border border-gray-300 rounded-lg"><input type="email" id="nuevo-proveedor-email" placeholder="Correo" class="w-full p-3 border border-gray-300 rounded-lg"><button type="submit" class="w-full bg-teal-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-teal-700">Registrar</button></form></div><div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-md"><div class="flex justify-between items-center mb-4"><h2 class="text-xl font-semibold">Proveedores</h2><input type="search" id="search-proveedores" placeholder="Buscar..." class="p-2 border rounded-lg"></div><div id="proveedores-list" class="space-y-3"></div></div></div>`;
-    document.getElementById('view-items').innerHTML = `<div class="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-6xl mx-auto"><div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-md"><h2 class="text-xl font-semibold mb-4">Añadir Ítem</h2><form id="add-item-form" class="space-y-4"><input type="text" id="nuevo-item-ref" placeholder="Referencia (ej. P-001)" class="w-full p-3 border border-gray-300 rounded-lg" required><input type="text" id="nuevo-item-desc" placeholder="Descripción del Ítem o Servicio" class="w-full p-3 border border-gray-300 rounded-lg" required><button type="submit" class="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-700">Registrar</button></form></div><div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-md"><div class="flex justify-between items-center mb-4"><h2 class="text-xl font-semibold">Catálogo de Ítems</h2><input type="search" id="search-items" placeholder="Buscar..." class="p-2 border rounded-lg"></div><div id="items-list" class="space-y-3"></div></div></div>`;
-    document.getElementById('view-colores').innerHTML = `<div class="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-6xl mx-auto"><div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-md"><h2 class="text-xl font-semibold mb-4">Añadir Color</h2><form id="add-color-form" class="space-y-4"><input type="text" id="nuevo-color-nombre" placeholder="Nombre del Color (ej. RAL 7016)" class="w-full p-3 border border-gray-300 rounded-lg" required><button type="submit" class="w-full bg-purple-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-purple-700">Registrar</button></form></div><div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-md"><div class="flex justify-between items-center mb-4"><h2 class="text-xl font-semibold">Catálogo de Colores</h2><input type="search" id="search-colores" placeholder="Buscar..." class="p-2 border rounded-lg"></div><div id="colores-list" class="space-y-3"></div></div></div>`;
     document.getElementById('view-gastos').innerHTML = `<div class="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-6xl mx-auto"><div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-md"><h2 class="text-xl font-semibold mb-4">Nuevo Gasto</h2><form id="add-gasto-form" class="space-y-4"><div><label for="gasto-fecha">Fecha</label><input type="date" id="gasto-fecha" class="w-full p-3 border border-gray-300 rounded-lg mt-1" required></div><div class="relative"><label for="proveedor-search-input">Proveedor</label><input type="text" id="proveedor-search-input" autocomplete="off" placeholder="Buscar..." class="w-full p-3 border border-gray-300 rounded-lg mt-1" required><input type="hidden" id="proveedor-id-hidden" name="proveedorId"><div id="proveedor-search-results" class="search-results hidden"></div></div><input type="text" id="gasto-factura" placeholder="N° de Factura (Opcional)" class="w-full p-3 border border-gray-300 rounded-lg"><input type="text" id="gasto-valor-total" inputmode="numeric" placeholder="Valor Total" class="w-full p-3 border border-gray-300 rounded-lg" required><label class="flex items-center space-x-2"><input type="checkbox" id="gasto-iva" class="h-4 w-4 rounded border-gray-300"><span>IVA del 19% incluido</span></label><div><label for="gasto-fuente">Fuente del Pago</label><select id="gasto-fuente" class="w-full p-3 border border-gray-300 rounded-lg mt-1 bg-white" required><option>Efectivo</option><option>Nequi</option><option>Davivienda</option></select></div><button type="submit" class="w-full bg-orange-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-orange-700">Registrar</button></form></div><div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-md"><div class="flex flex-col sm:flex-row justify-between sm:items-center mb-4 gap-4"><h2 class="text-xl font-semibold flex-shrink-0">Historial de Gastos</h2><div class="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-start sm:justify-end"><select id="filter-gastos-month" class="p-2 border rounded-lg bg-white"></select><select id="filter-gastos-year" class="p-2 border rounded-lg bg-white"></select><input type="search" id="search-gastos" placeholder="Buscar..." class="p-2 border rounded-lg flex-grow sm:flex-grow-0 sm:w-40"></div></div><div id="gastos-list" class="space-y-3"></div></div></div>`;
     document.getElementById('view-empleados').innerHTML = `<div class="bg-white p-6 rounded-xl shadow-md max-w-4xl mx-auto"><h2 class="text-xl font-semibold mb-4">Gestión de Empleados</h2><div id="empleados-list" class="space-y-3"></div></div>`;
-    // Nos aseguramos de limpiar listeners anteriores por si acaso
-    unsubscribeAllListeners();
-    // Al cargar los datos, guardamos la función de desuscripción que retorna cada listener
-    activeListeners.push(loadClientes());
-    activeListeners.push(loadProveedores());
-    activeListeners.push(loadItems());
-    activeListeners.push(loadColores());
-    activeListeners.push(loadRemisiones());
-    activeListeners.push(loadGastos());
-    if (currentUserData && currentUserData.role === 'admin') {
-        activeListeners.push(loadEmpleados());
-    }
 }
 
-// **** FUNCIÓN CORREGIDA ****
-// Reemplaza la función completa en js/app.js
 function updateUIVisibility(userData) {
     if (!userData) return;
     const isAdmin = userData.role?.toLowerCase() === 'admin';
-
-    // Muestra u oculta las pestañas de navegación
     ALL_MODULES.forEach(module => {
         const tab = document.getElementById(`tab-${module}`);
         if (tab) {
-            const hasPermission = isAdmin || (userData.permissions && userData.permissions[module]);
+            let hasPermission = isAdmin || (userData.permissions && userData.permissions[module]);
             tab.classList.toggle('hidden', !hasPermission);
         }
     });
-
-    // Muestra los botones correctos del encabezado según el rol
     document.getElementById('view-all-loans-btn').style.display = isAdmin ? 'block' : 'none';
     document.getElementById('summary-btn').style.display = isAdmin ? 'block' : 'none';
     document.getElementById('loan-request-btn').style.display = isAdmin ? 'none' : 'block';
-
-
-    // Ajusta la vista de remisiones para el rol de planta
     const isPlanta = userData.role?.toLowerCase() === 'planta';
     const remisionFormContainer = document.getElementById('remision-form-container');
     const remisionListContainer = document.getElementById('remisiones-list-container');
@@ -216,7 +197,6 @@ function updateUIVisibility(userData) {
         remisionListContainer.classList.toggle('lg:col-span-2', !isPlanta);
     }
 }
-
 
 function loadInitialData() {
     // Cargar plantillas HTML en las vistas
@@ -236,12 +216,11 @@ function loadInitialData() {
 }
 
 // --- LÓGICA DE LOGIN/REGISTRO/LOGOUT ---
-document.getElementById('show-register-link').addEventListener('click', (e) => { e.preventDefault(); loginForm.classList.add('hidden'); registerForm.classList.remove('hidden'); });
-document.getElementById('show-login-link').addEventListener('click', (e) => { e.preventDefault(); registerForm.classList.add('hidden'); loginForm.classList.remove('hidden'); });
 
 loginForm.addEventListener('submit', handleLoginSubmit); // Asegúrate de tener la función handleLoginSubmit
 registerForm.addEventListener('submit', handleRegisterSubmit); // Asegúrate de tener la función handleRegisterSubmit
 
+// --- LÓGICA DE LOGIN/REGISTRO/LOGOUT ---
 function handleLoginSubmit(e) {
     e.preventDefault();
     const email = document.getElementById('login-email').value;
@@ -255,13 +234,11 @@ function handleLoginSubmit(e) {
 async function handleRegisterSubmit(e) {
     e.preventDefault();
     if (isRegistering) return;
-
     isRegistering = true;
     const submitButton = e.target.querySelector('button[type="submit"]');
     submitButton.disabled = true;
     submitButton.textContent = 'Registrando...';
     submitButton.classList.add('opacity-50', 'cursor-not-allowed');
-
     const politicaCheckbox = document.getElementById('register-politica');
     if (!politicaCheckbox.checked) {
         showModalMessage("Debes aceptar la Política de Tratamiento de Datos.");
@@ -271,9 +248,6 @@ async function handleRegisterSubmit(e) {
         submitButton.classList.remove('opacity-50', 'cursor-not-allowed');
         return;
     }
-
-    // --- INICIO DE LA CORRECCIÓN ---
-    // Se capturan todos los valores del formulario
     const nombre = document.getElementById('register-name').value;
     const cedula = document.getElementById('register-cedula').value;
     const telefono = document.getElementById('register-phone').value;
@@ -281,24 +255,17 @@ async function handleRegisterSubmit(e) {
     const email = document.getElementById('register-email').value;
     const password = document.getElementById('register-password').value;
     const dob = document.getElementById('register-dob').value;
-    // --- FIN DE LA CORRECCIÓN ---
-
     showModalMessage("Registrando...", true);
-
     try {
         const role = 'planta';
         const status = 'pending';
         const permissions = {
             remisiones: true, prestamos: true,
-            facturacion: false, clientes: false, items: false,
-            colores: false, gastos: false, proveedores: false, empleados: false
+            facturacion: false, clientes: false,
+            gastos: false, proveedores: false, empleados: false
         };
-
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
-
-        // --- INICIO DE LA CORRECCIÓN ---
-        // Se guardan todos los campos capturados en la base de datos
         await setDoc(doc(db, "users", user.uid), {
             nombre: nombre,
             cedula: cedula,
@@ -311,16 +278,12 @@ async function handleRegisterSubmit(e) {
             permissions: permissions,
             creadoEn: new Date()
         });
-        // --- FIN DE LA CORRECCIÓN ---
-
         hideModal();
         showModalMessage("¡Registro exitoso! Tu cuenta está pendiente de aprobación.", false, 5000);
         registerForm.reset();
         registerForm.classList.add('hidden');
         loginForm.classList.remove('hidden');
-
         await signOut(auth);
-
     } catch (error) {
         hideModal();
         console.error("Error de registro:", error);
@@ -332,6 +295,7 @@ async function handleRegisterSubmit(e) {
         submitButton.classList.remove('opacity-50', 'cursor-not-allowed');
     }
 }
+
 
 loginForm.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -353,17 +317,28 @@ document.getElementById('logout-btn').addEventListener('click', () => {
 
 // --- LÓGICA DE NAVEGACIÓN Y EVENTOS ---
 function setupEventListeners() {
-    const tabs = { remisiones: document.getElementById('tab-remisiones'), facturacion: document.getElementById('tab-facturacion'), clientes: document.getElementById('tab-clientes'), items: document.getElementById('tab-items'), colores: document.getElementById('tab-colores'), gastos: document.getElementById('tab-gastos'), proveedores: document.getElementById('tab-proveedores'), empleados: document.getElementById('tab-empleados') };
-    const views = { remisiones: document.getElementById('view-remisiones'), facturacion: document.getElementById('view-facturacion'), clientes: document.getElementById('view-clientes'), items: document.getElementById('view-items'), colores: document.getElementById('view-colores'), gastos: document.getElementById('view-gastos'), proveedores: document.getElementById('view-proveedores'), empleados: document.getElementById('view-empleados') };
-    Object.keys(tabs).forEach(key => { if (tabs[key]) tabs[key].addEventListener('click', () => switchView(key, tabs, views)) });
+    const tabs = { remisiones: document.getElementById('tab-remisiones'), facturacion: document.getElementById('tab-facturacion'), inventario: document.getElementById('tab-inventario'), clientes: document.getElementById('tab-clientes'), gastos: document.getElementById('tab-gastos'), proveedores: document.getElementById('tab-proveedores'), empleados: document.getElementById('tab-empleados') };
+    const views = { remisiones: document.getElementById('view-remisiones'), facturacion: document.getElementById('view-facturacion'), inventario: document.getElementById('view-inventario'), clientes: document.getElementById('view-clientes'), gastos: document.getElementById('view-gastos'), proveedores: document.getElementById('view-proveedores'), empleados: document.getElementById('view-empleados') };
+    Object.keys(tabs).forEach(key => { if (tabs[key]) { tabs[key].addEventListener('click', () => switchView(key, tabs, views)) } });
+    
+    document.getElementById('add-importacion-btn').addEventListener('click', () => showImportacionModal());
+    const importacionesList = document.getElementById('importaciones-list');
+    if (importacionesList) {
+        importacionesList.addEventListener('click', (e) => {
+            if (e.target.classList.contains('details-importacion-btn')) {
+                const importacionId = e.target.dataset.id;
+                const importacion = allImportaciones.find(imp => imp.id === importacionId);
+                if (importacion) { showImportacionModal(importacion); }
+            }
+        });
+    }
+    registerForm.addEventListener('submit', handleRegisterSubmit);
+    document.getElementById('show-login-link-register').addEventListener('click', (e) => { e.preventDefault(); registerForm.classList.add('hidden'); loginForm.classList.remove('hidden'); });
     const policyModal = document.getElementById('policy-modal');
-
-
     const facturacionPendientesTab = document.getElementById('tab-pendientes');
     const facturacionRealizadasTab = document.getElementById('tab-realizadas');
     const facturacionPendientesView = document.getElementById('view-pendientes');
     const facturacionRealizadasView = document.getElementById('view-realizadas');
-
     if (facturacionPendientesTab) {
         facturacionPendientesTab.addEventListener('click', () => {
             facturacionPendientesTab.classList.add('active');
@@ -381,8 +356,6 @@ function setupEventListeners() {
         });
     }
 
-    document.getElementById('add-color-form').addEventListener('submit', async (e) => { e.preventDefault(); const nuevoColor = { nombre: document.getElementById('nuevo-color-nombre').value, creadoEn: new Date() }; showModalMessage("Registrando color...", true); try { await addDoc(collection(db, "colores"), nuevoColor); e.target.reset(); hideModal(); showModalMessage("¡Color registrado!", false, 2000); } catch (error) { console.error(error); hideModal(); showModalMessage("Error al registrar color."); } });
-    document.getElementById('add-item-form').addEventListener('submit', async (e) => { e.preventDefault(); const nuevoItem = { referencia: document.getElementById('nuevo-item-ref').value, descripcion: document.getElementById('nuevo-item-desc').value, creadoEn: new Date() }; showModalMessage("Registrando ítem...", true); try { await addDoc(collection(db, "items"), nuevoItem); e.target.reset(); hideModal(); showModalMessage("¡Ítem registrado!", false, 2000); } catch (error) { console.error(error); hideModal(); showModalMessage("Error al registrar ítem."); } });
     document.getElementById('add-cliente-form').addEventListener('submit', async (e) => { e.preventDefault(); const nuevoCliente = { nombre: document.getElementById('nuevo-cliente-nombre').value, email: document.getElementById('nuevo-cliente-email').value, telefono1: document.getElementById('nuevo-cliente-telefono1').value, telefono2: document.getElementById('nuevo-cliente-telefono2').value, nit: document.getElementById('nuevo-cliente-nit').value || '', creadoEn: new Date() }; showModalMessage("Registrando cliente...", true); try { await addDoc(collection(db, "clientes"), nuevoCliente); e.target.reset(); hideModal(); showModalMessage("¡Cliente registrado!", false, 2000); } catch (error) { console.error(error); hideModal(); showModalMessage("Error al registrar cliente."); } });
     document.getElementById('add-proveedor-form').addEventListener('submit', handleProveedorSubmit);
     document.getElementById('add-gasto-form').addEventListener('submit', handleGastoSubmit);
@@ -400,21 +373,16 @@ function setupEventListeners() {
         e.preventDefault();
         policyModal.classList.remove('hidden');
     });
-
     document.getElementById('close-policy-modal').addEventListener('click', () => {
         policyModal.classList.add('hidden');
     });
     document.getElementById('accept-policy-btn').addEventListener('click', () => {
         policyModal.classList.add('hidden');
     });
-
-    // Delegación de eventos para los botones de la sección de empleados
     const empleadosView = document.getElementById('view-empleados');
     if (empleadosView) {
         empleadosView.addEventListener('click', async (e) => {
             const target = e.target;
-
-            // Lógica para los botones de estado
             if (target.classList.contains('user-status-btn')) {
                 const uid = target.dataset.uid;
                 const newStatus = target.dataset.status;
@@ -428,44 +396,29 @@ function setupEventListeners() {
                     }
                 }
             }
-
-            // Lógica para el botón de gestionar
             if (target.classList.contains('manage-user-btn')) {
                 showAdminEditUserModal(JSON.parse(target.dataset.userJson));
             }
         });
     }
-
-
-    // Listeners para buscadores
     document.getElementById('search-remisiones').addEventListener('input', renderRemisiones);
     document.getElementById('search-clientes').addEventListener('input', renderClientes);
     document.getElementById('search-proveedores').addEventListener('input', renderProveedores);
-    document.getElementById('search-items').addEventListener('input', renderItems);
-    document.getElementById('search-colores').addEventListener('input', renderColores);
     document.getElementById('search-gastos').addEventListener('input', renderGastos);
-
-    // Listeners para filtros de fecha
     populateDateFilters('filter-remisiones');
     populateDateFilters('filter-gastos');
     document.getElementById('filter-remisiones-month').addEventListener('change', renderRemisiones);
     document.getElementById('filter-remisiones-year').addEventListener('change', renderRemisiones);
     document.getElementById('filter-gastos-month').addEventListener('change', renderGastos);
     document.getElementById('filter-gastos-year').addEventListener('change', renderGastos);
-
-    // Fecha de recibido
     const fechaRecibidoInput = document.getElementById('fecha-recibido');
     if (fechaRecibidoInput) {
         fechaRecibidoInput.value = new Date().toISOString().split('T')[0];
     }
-
-    // Listeners para formateo de moneda
     document.getElementById('view-gastos').addEventListener('focusout', (e) => { if (e.target.id === 'gasto-valor-total') { formatCurrencyInput(e.target); } });
     document.getElementById('view-gastos').addEventListener('focus', (e) => { if (e.target.id === 'gasto-valor-total') { unformatCurrencyInput(e.target); } });
     document.getElementById('view-remisiones').addEventListener('focusout', (e) => { if (e.target.classList.contains('item-valor-unitario')) { formatCurrencyInput(e.target); calcularTotales(); } });
     document.getElementById('view-remisiones').addEventListener('focus', (e) => { if (e.target.classList.contains('item-valor-unitario')) { unformatCurrencyInput(e.target); } });
-
-    // Listener para el nuevo botón de préstamos del admin
     document.getElementById('view-all-loans-btn').addEventListener('click', () => {
         showAllLoansModal(allPendingLoans);
     });
@@ -972,6 +925,212 @@ function renderFacturacion() {
     document.querySelectorAll('.view-factura-pdf-btn').forEach(button => button.addEventListener('click', (e) => { const pdfUrl = e.currentTarget.dataset.pdfUrl; const remisionNum = e.currentTarget.dataset.remisionNum; showPdfModal(pdfUrl, `Factura N° ${remisionNum}`); }));
 }
 
+
+// --- FUNCIONES DEL MÓDULO DE INVENTARIO ---
+function loadImportaciones() {
+    const q = query(collection(db, "importaciones"), orderBy("numeroImportacion", "desc"));
+    return onSnapshot(q, (snapshot) => {
+        allImportaciones = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        renderImportaciones();
+    });
+}
+
+function renderImportaciones() {
+    const listEl = document.getElementById('importaciones-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    if (allImportaciones.length === 0) {
+        listEl.innerHTML = '<p class="text-center text-gray-500 py-8">No hay importaciones registradas.</p>';
+        return;
+    }
+    allImportaciones.forEach(imp => {
+        const el = document.createElement('div');
+        el.className = 'border p-4 rounded-lg';
+        el.innerHTML = `
+            <div class="flex flex-col sm:flex-row justify-between items-start">
+                <div>
+                    <p class="font-bold text-lg">Importación N° ${imp.numeroImportacion}</p>
+                    <p class="text-sm text-gray-700">${imp.itemContenido || 'Sin descripción'}</p>
+                    <p class="text-xs text-gray-500 mt-1">Pedido: ${imp.fechaPedido || 'N/A'} | Llegada: ${imp.fechaLlegada || 'N/A'}</p>
+                </div>
+                <div class="mt-4 sm:mt-0 flex-shrink-0">
+                    <button data-id="${imp.id}" class="details-importacion-btn bg-gray-200 text-gray-800 font-semibold py-2 px-4 rounded-lg hover:bg-gray-300">
+                        Ver Detalles
+                    </button>
+                </div>
+            </div>
+        `;
+        listEl.appendChild(el);
+    });
+}
+
+function showImportacionModal(importacion = null) {
+    const modalContentWrapper = document.getElementById('modal-content-wrapper');
+    const isEditing = importacion !== null;
+    const title = isEditing ? `Detalles de Importación N° ${importacion.numeroImportacion}` : "Crear Nueva Importación";
+
+    let gastosHTML = GASTOS_IMPORTACION.map(gasto => {
+        const gastoData = isEditing && importacion.gastos && importacion.gastos[gasto.id] ? importacion.gastos[gasto.id] : { valor: 0, archivos: [] };
+        let archivosHTML = gastoData.archivos.map(file => `<a href="${file.url}" target="_blank" class="text-blue-600 hover:underline text-sm">${file.name}</a>`).join('<br>');
+        return `
+            <div class="bg-gray-100 p-4 rounded-lg">
+                <label class="block text-md font-semibold text-gray-800 mb-2">${gasto.name}</label>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label for="${gasto.id}-valor" class="text-sm font-medium">Valor del Gasto</label>
+                        <input type="text" id="${gasto.id}-valor" class="gasto-valor-input w-full p-2 border rounded-lg mt-1" value="${gastoData.valor ? formatCurrency(gastoData.valor) : ''}">
+                    </div>
+                    <div>
+                        <label for="${gasto.id}-files" class="text-sm font-medium">Adjuntar Archivos</label>
+                        <input type="file" id="${gasto.id}-files" class="gasto-file-input w-full text-sm mt-1" multiple>
+                        <div id="${gasto.id}-file-list" class="mt-2 text-xs space-y-1">${archivosHTML}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    modalContentWrapper.innerHTML = `
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl mx-auto flex flex-col" style="max-height: 90vh;">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h2 class="text-xl font-semibold">${title}</h2>
+                <button id="close-importacion-modal" class="text-gray-500 hover:text-gray-800 text-3xl">&times;</button>
+            </div>
+            <div class="p-6 overflow-y-auto flex-grow">
+                <form id="importacion-form" class="space-y-6">
+                    <input type="hidden" id="importacion-id" value="${isEditing ? importacion.id : ''}">
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div><label class="block text-sm font-medium">Valor</label><input type="text" id="importacion-valor" class="w-full p-2 border rounded-lg mt-1" value="${importacion?.valor ? formatCurrency(importacion.valor) : ''}"></div>
+                        <div><label class="block text-sm font-medium">Fecha de Pedido</label><input type="date" id="importacion-fecha-pedido" class="w-full p-2 border rounded-lg mt-1" value="${importacion?.fechaPedido || ''}"></div>
+                        <div><label class="block text-sm font-medium">Fecha de Llegada</label><input type="date" id="importacion-fecha-llegada" class="w-full p-2 border rounded-lg mt-1" value="${importacion?.fechaLlegada || ''}"></div>
+                        <div><label class="block text-sm font-medium">Naviera</label><input type="text" id="importacion-naviera" class="w-full p-2 border rounded-lg mt-1" value="${importacion?.naviera || ''}"></div>
+                        <div><label class="block text-sm font-medium">Número de BL</label><input type="text" id="importacion-bl" class="w-full p-2 border rounded-lg mt-1" value="${importacion?.numeroBl || ''}"></div>
+                        <div><label class="block text-sm font-medium">Cantidad</label><input type="number" id="importacion-cantidad" class="w-full p-2 border rounded-lg mt-1" value="${importacion?.cantidad || ''}"></div>
+                    </div>
+                    <div><label class="block text-sm font-medium">Ítem Contenido / Descripción</label><textarea id="importacion-item" class="w-full p-2 border rounded-lg mt-1" rows="2">${importacion?.itemContenido || ''}</textarea></div>
+                    <h3 class="text-lg font-bold border-t pt-4 mt-6">Archivos y Gastos Asociados</h3>
+                    <div class="space-y-4">${gastosHTML}</div>
+                </form>
+            </div>
+            <div class="p-4 border-t text-right">
+                <button id="save-importacion-btn" class="bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-indigo-700">Guardar</button>
+            </div>
+        </div>
+    `;
+    document.getElementById('modal').classList.remove('hidden');
+    document.getElementById('close-importacion-modal').addEventListener('click', hideModal);
+    
+    // **CORRECCIÓN CLAVE**: El listener del botón de guardar AHORA se asigna aquí.
+    const saveBtn = document.getElementById('save-importacion-btn');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', handleImportacionSubmit);
+    }
+
+    document.getElementById('importacion-valor').addEventListener('blur', (e) => formatCurrencyInput(e.target));
+    document.getElementById('importacion-valor').addEventListener('focus', (e) => unformatCurrencyInput(e.target));
+    document.querySelectorAll('.gasto-valor-input').forEach(input => {
+        input.addEventListener('blur', (e) => formatCurrencyInput(e.target));
+        input.addEventListener('focus', (e) => unformatCurrencyInput(e.target));
+    });
+}
+    
+/**
+ * Maneja el guardado de una importación.
+ */
+async function handleImportacionSubmit() {
+    const form = document.getElementById('importacion-form');
+    if (!form) {
+        showModalMessage("Error crítico: El formulario de importación no se pudo encontrar. Intente de nuevo.", "error");
+        return;
+    }
+    showModalMessage("Guardando importación...", true);
+    try {
+        const importacionIdInput = form.querySelector('#importacion-id');
+        const isEditing = !!importacionIdInput.value;
+        const importacionId = isEditing ? importacionIdInput.value : doc(collection(db, 'importaciones')).id;
+        const importacionRef = doc(db, "importaciones", importacionId);
+
+        let numeroImportacion;
+        if (!isEditing) {
+            const counterRef = doc(db, "counters", "importacionCounter");
+            numeroImportacion = await runTransaction(db, async (transaction) => {
+                const counterDoc = await transaction.get(counterRef);
+                const newNumber = (counterDoc.exists() ? counterDoc.data().currentNumber : 0) + 1;
+                transaction.set(counterRef, { currentNumber: newNumber }, { merge: true });
+                return newNumber;
+            });
+        } else {
+            const docSnap = await getDoc(importacionRef);
+            numeroImportacion = docSnap.data().numeroImportacion;
+        }
+
+        const data = {
+            numeroImportacion: numeroImportacion,
+            valor: unformatCurrency(form.querySelector('#importacion-valor').value),
+            fechaPedido: form.querySelector('#importacion-fecha-pedido').value,
+            fechaLlegada: form.querySelector('#importacion-fecha-llegada').value,
+            naviera: form.querySelector('#importacion-naviera').value,
+            numeroBl: form.querySelector('#importacion-bl').value,
+            cantidad: parseInt(form.querySelector('#importacion-cantidad').value) || 0,
+            itemContenido: form.querySelector('#importacion-item').value,
+            gastos: {},
+            lastUpdated: new Date()
+        };
+
+        const uploadPromises = [];
+        const gastosBatch = writeBatch(db);
+
+        for (const gasto of GASTOS_IMPORTACION) {
+            const valorInput = form.querySelector(`#${gasto.id}-valor`);
+            const fileInput = form.querySelector(`#${gasto.id}-files`);
+            const valor = unformatCurrency(valorInput.value);
+            const files = fileInput.files;
+
+            if (valor > 0 || files.length > 0) {
+                const gastoData = data.gastos[gasto.id] = {
+                    valor: valor,
+                    archivos: allImportaciones.find(i => i.id === importacionId)?.gastos?.[gasto.id]?.archivos || []
+                };
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    const storageRef = ref(storage, `importaciones/${importacionId}/${gasto.id}/${file.name}`);
+                    uploadPromises.push(
+                        uploadBytes(storageRef, file)
+                            .then(snapshot => getDownloadURL(snapshot.ref))
+                            .then(url => { gastoData.archivos.push({ name: file.name, url: url }); })
+                    );
+                }
+                if (valor > 0) {
+                    const gastoDocRef = doc(collection(db, "gastos"));
+                    gastosBatch.set(gastoDocRef, {
+                        fecha: data.fechaLlegada || new Date().toISOString().split('T')[0],
+                        proveedorNombre: `Importación N° ${numeroImportacion}`,
+                        numeroFactura: gasto.name,
+                        valorTotal: valor,
+                        fuentePago: 'N/A',
+                        registradoPor: currentUser.uid,
+                        timestamp: new Date(),
+                        isImportacionGasto: true,
+                        importacionId: importacionId
+                    });
+                }
+            }
+        }
+
+        await Promise.all(uploadPromises);
+        await setDoc(importacionRef, data, { merge: true });
+        await gastosBatch.commit();
+        
+        hideModal();
+        showModalMessage("¡Importación guardada con éxito!", false, 2000);
+
+    } catch (error) {
+        console.error("Error al guardar importación:", error);
+        showModalMessage(`Error al guardar: ${error.message}`);
+    }
+}
+
+
 // --- FUNCIONES DE MANEJO DE ACCIONES ---
 async function handleProveedorSubmit(e) { e.preventDefault(); const nuevoProveedor = { nombre: document.getElementById('nuevo-proveedor-nombre').value, contacto: document.getElementById('nuevo-proveedor-contacto').value, telefono: document.getElementById('nuevo-proveedor-telefono').value, email: document.getElementById('nuevo-proveedor-email').value, creadoEn: new Date(), }; showModalMessage("Registrando proveedor...", true); try { await addDoc(collection(db, "proveedores"), nuevoProveedor); e.target.reset(); hideModal(); showModalMessage("¡Proveedor registrado!", false, 2000); } catch (error) { console.error("Error al registrar proveedor:", error); hideModal(); showModalMessage("Error al registrar el proveedor."); } }
 async function handleGastoSubmit(e) {
@@ -1013,6 +1172,7 @@ async function handleGastoSubmit(e) {
 }
 async function handleStatusUpdate(remisionId, currentStatus) { const currentIndex = ESTADOS_REMISION.indexOf(currentStatus); if (currentIndex < ESTADOS_REMISION.length - 1) { const nextStatus = ESTADOS_REMISION[currentIndex + 1]; const updateData = { estado: nextStatus }; if (nextStatus === 'Entregado') { updateData.fechaEntrega = new Date().toISOString().split('T')[0]; } showModalMessage("Actualizando estado...", true); try { await updateDoc(doc(db, "remisiones", remisionId), updateData); hideModal(); } catch (error) { console.error("Error al actualizar estado:", error); showModalMessage("Error al actualizar estado."); } } }
 async function handleAnularRemision(remisionId) { showModalMessage("Anulando remisión...", true); try { const remisionRef = doc(db, "remisiones", remisionId); await updateDoc(remisionRef, { estado: "Anulada" }); hideModal(); showModalMessage("¡Remisión anulada con éxito!", false, 2000); } catch (error) { console.error("Error al anular la remisión:", error); hideModal(); showModalMessage("Error al anular la remisión."); } }
+
 async function handleRemisionSubmit(e) {
     e.preventDefault();
     const clienteId = document.getElementById('cliente-id-hidden').value;
@@ -1039,10 +1199,8 @@ async function handleRemisionSubmit(e) {
         });
         const { subtotalGeneral, valorIVA, total } = calcularTotales();
         const items = Array.from(itemsContainer.querySelectorAll('.item-row')).map(row => ({
-            itemId: row.querySelector('.item-id-hidden').value,
-            referencia: row.querySelector('.item-id-hidden').dataset.ref,
-            descripcion: row.querySelector('.item-id-hidden').dataset.desc,
-            color: row.querySelector('.color-name-hidden').value,
+            // Se elimina la lógica de búsqueda de items y colores
+            descripcion: row.querySelector('.item-descripcion').value,
             cantidad: parseFloat(row.querySelector('.item-cantidad').value) || 0,
             valorUnitario: unformatCurrency(row.querySelector('.item-valor-unitario').value) || 0,
         }));
@@ -1075,9 +1233,6 @@ async function handleRemisionSubmit(e) {
         };
         await addDoc(collection(db, "remisiones"), nuevaRemision);
 
-        // --- LÍNEA CLAVE AÑADIDA ---
-        // Forzamos la actualización de la lista visualmente.
-        // onSnapshot debería hacer esto, pero si no lo hace, esta línea lo garantiza.
         renderRemisiones();
 
         e.target.reset();
@@ -1230,16 +1385,10 @@ function createItemElement() {
     itemRow.className = 'item-row grid grid-cols-1 gap-2';
     itemRow.dataset.id = dynamicElementCounter;
 
+    // Se ha eliminado el campo de búsqueda de color
     itemRow.innerHTML = `
-        <div class="relative">
-            <input type="text" id="item-search-${dynamicElementCounter}" autocomplete="off" placeholder="Buscar ítem..." class="item-search-input w-full p-2 border border-gray-300 rounded-lg" required>
-            <input type="hidden" class="item-id-hidden" name="itemId">
-            <div id="item-results-${dynamicElementCounter}" class="search-results hidden"></div>
-        </div>
-        <div class="relative">
-            <input type="text" id="color-search-${dynamicElementCounter}" autocomplete="off" placeholder="Buscar color..." class="color-search-input w-full p-2 border border-gray-300 rounded-lg" required>
-            <input type="hidden" class="color-name-hidden" name="colorName">
-            <div id="color-results-${dynamicElementCounter}" class="search-results hidden"></div>
+        <div>
+            <input type="text" id="item-desc-${dynamicElementCounter}" placeholder="Descripción de la lámina o servicio" class="item-descripcion w-full p-2 border border-gray-300 rounded-lg" required>
         </div>
         <div class="grid grid-cols-3 gap-2">
             <input type="number" class="item-cantidad p-2 border border-gray-300 rounded-lg" placeholder="Cant." min="1" required>
@@ -1248,31 +1397,12 @@ function createItemElement() {
         </div>
     `;
 
-    setTimeout(() => {
-        const itemSearchInput = document.getElementById(`item-search-${dynamicElementCounter}`);
-        const itemResultsContainer = document.getElementById(`item-results-${dynamicElementCounter}`);
-        const itemIdHidden = itemRow.querySelector('.item-id-hidden');
-
-        initSearchableInput(itemSearchInput, itemResultsContainer, () => allItems, (item) => `${item.referencia} - ${item.descripcion}`, (selectedItem) => {
-            itemIdHidden.value = selectedItem ? selectedItem.id : '';
-            itemIdHidden.dataset.ref = selectedItem ? selectedItem.referencia : '';
-            itemIdHidden.dataset.desc = selectedItem ? selectedItem.descripcion : '';
-        });
-
-        const colorSearchInput = document.getElementById(`color-search-${dynamicElementCounter}`);
-        const colorResultsContainer = document.getElementById(`color-results-${dynamicElementCounter}`);
-        const colorNameHidden = itemRow.querySelector('.color-name-hidden');
-
-        initSearchableInput(colorSearchInput, colorResultsContainer, () => allColores, (color) => color.nombre, (selectedColor) => {
-            colorNameHidden.value = selectedColor ? selectedColor.nombre : '';
-        });
-    }, 0);
-
     itemRow.querySelector('.remove-item-btn').addEventListener('click', () => { itemRow.remove(); calcularTotales(); });
     itemRow.querySelectorAll('input.item-cantidad, input.item-valor-unitario').forEach(input => input.addEventListener('input', calcularTotales));
 
     return itemRow;
 }
+
 function calcularTotales() { const itemsContainer = document.getElementById('items-container'); const ivaCheckbox = document.getElementById('incluir-iva'); const subtotalEl = document.getElementById('subtotal'); const valorIvaEl = document.getElementById('valor-iva'); const valorTotalEl = document.getElementById('valor-total'); if (!itemsContainer || !ivaCheckbox || !subtotalEl || !valorIvaEl || !valorTotalEl) return { subtotalGeneral: 0, valorIVA: 0, total: 0 }; let subtotalGeneral = 0; itemsContainer.querySelectorAll('.item-row').forEach(row => { const cantidad = parseFloat(row.querySelector('.item-cantidad').value) || 0; const valorUnitario = unformatCurrency(row.querySelector('.item-valor-unitario').value); subtotalGeneral += cantidad * valorUnitario; }); const incluyeIVA = ivaCheckbox.checked; const valorIVA = incluyeIVA ? subtotalGeneral * 0.19 : 0; const total = subtotalGeneral + valorIVA; subtotalEl.textContent = formatCurrency(subtotalGeneral); valorIvaEl.textContent = formatCurrency(valorIVA); valorTotalEl.textContent = formatCurrency(total); return { subtotalGeneral, valorIVA, total }; }
 function showEditClientModal(client) { const modalContentWrapper = document.getElementById('modal-content-wrapper'); modalContentWrapper.innerHTML = `<div class="bg-white rounded-lg p-6 shadow-xl max-w-sm w-full mx-auto text-center"><h2 class="text-xl font-semibold mb-4">Editar Cliente</h2><form id="edit-client-form" class="space-y-4 text-left"><input type="hidden" id="edit-client-id" value="${client.id}"><div><label for="edit-client-name" class="block text-sm font-medium text-gray-700">Nombre</label><input type="text" id="edit-client-name" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${client.nombre}" required></div><div><label for="edit-client-email" class="block text-sm font-medium text-gray-700">Correo</label><input type="email" id="edit-client-email" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${client.email}" required></div><div><label for="edit-client-phone1" class="block text-sm font-medium text-gray-700">Teléfono 1</label><input type="tel" id="edit-client-phone1" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${client.telefono1 || ''}" required></div><div><label for="edit-client-phone2" class="block text-sm font-medium text-gray-700">Teléfono 2</label><input type="tel" id="edit-client-phone2" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${client.telefono2 || ''}"></div><div><label for="edit-client-nit" class="block text-sm font-medium text-gray-700">NIT</label><input type="text" id="edit-client-nit" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${client.nit || ''}"></div><div class="flex gap-4 justify-end pt-4"><button type="button" id="cancel-edit-btn" class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-semibold">Cancelar</button><button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-semibold">Guardar Cambios</button></div></form></div>`; document.getElementById('modal').classList.remove('hidden'); document.getElementById('cancel-edit-btn').addEventListener('click', hideModal); document.getElementById('edit-client-form').addEventListener('submit', async (e) => { e.preventDefault(); const clientId = document.getElementById('edit-client-id').value; const updatedData = { nombre: document.getElementById('edit-client-name').value, email: document.getElementById('edit-client-email').value, telefono1: document.getElementById('edit-client-phone1').value, telefono2: document.getElementById('edit-client-phone2').value, nit: document.getElementById('edit-client-nit').value, }; showModalMessage("Actualizando cliente...", true); try { await updateDoc(doc(db, "clientes", clientId), updatedData); hideModal(); showModalMessage("¡Cliente actualizado!", false, 2000); } catch (error) { console.error("Error al actualizar cliente:", error); showModalMessage("Error al actualizar."); } }); }
 function showEditProviderModal(provider) { const modalContentWrapper = document.getElementById('modal-content-wrapper'); modalContentWrapper.innerHTML = `<div class="bg-white rounded-lg p-6 shadow-xl max-w-sm w-full mx-auto text-center"><h2 class="text-xl font-semibold mb-4">Editar Proveedor</h2><form id="edit-provider-form" class="space-y-4 text-left"><input type="hidden" id="edit-provider-id" value="${provider.id}"><div><label for="edit-provider-name" class="block text-sm font-medium text-gray-700">Nombre</label><input type="text" id="edit-provider-name" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${provider.nombre}" required></div><div><label for="edit-provider-contact" class="block text-sm font-medium text-gray-700">Contacto</label><input type="text" id="edit-provider-contact" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${provider.contacto || ''}"></div><div><label for="edit-provider-phone" class="block text-sm font-medium text-gray-700">Teléfono</label><input type="tel" id="edit-provider-phone" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${provider.telefono || ''}"></div><div><label for="edit-provider-email" class="block text-sm font-medium text-gray-700">Correo</label><input type="email" id="edit-provider-email" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${provider.email || ''}"></div><div class="flex gap-4 justify-end pt-4"><button type="button" id="cancel-edit-btn" class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-semibold">Cancelar</button><button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-semibold">Guardar Cambios</button></div></form></div>`; document.getElementById('modal').classList.remove('hidden'); document.getElementById('cancel-edit-btn').addEventListener('click', hideModal); document.getElementById('edit-provider-form').addEventListener('submit', async (e) => { e.preventDefault(); const providerId = document.getElementById('edit-provider-id').value; const updatedData = { nombre: document.getElementById('edit-provider-name').value, contacto: document.getElementById('edit-provider-contact').value, telefono: document.getElementById('edit-provider-phone').value, email: document.getElementById('edit-provider-email').value, }; showModalMessage("Actualizando proveedor...", true); try { await updateDoc(doc(db, "proveedores", providerId), updatedData); hideModal(); showModalMessage("¡Proveedor actualizado!", false, 2000); } catch (error) { console.error("Error al actualizar proveedor:", error); showModalMessage("Error al actualizar."); } }); }
