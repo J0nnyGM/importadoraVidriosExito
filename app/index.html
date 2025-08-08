@@ -14,8 +14,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/styles.css">
-    <link rel="icon" type="image/jpeg" href="/app/recursos/LOGO PRISMA.jpg"> 
-    <script>window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());gtag('config', 'G-T2RKG90GC5');</script>
+    <link rel="icon" type="image/jpeg" href="/app/recursos/LOGO PRISMA.jpg">
+    <script>window.dataLayer = window.dataLayer || []; function gtag() { dataLayer.push(arguments); } gtag('js', new Date()); gtag('config', 'G-T2RKG90GC5');</script>
 </head>
 
 <body class="text-gray-800">
@@ -52,7 +52,7 @@
                         class="font-semibold text-indigo-600 hover:underline">Regístrate aquí</a></p>
             </form>
             <form id="register-form" class="hidden bg-white p-8 rounded-xl shadow-lg">
-                </form>
+            </form>
         </div>
     </div>
 
@@ -64,28 +64,41 @@
                 </div>
                 <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-4 sm:gap-0">
                     <div>
-                        <h1 class="text-2xl sm:text-3xl font-bold text-gray-900">Sistema de Gestión - Importadora de Vidrio</h1>
+                        <h1 class="text-2xl sm:text-3xl font-bold text-gray-900">Sistema de Gestión - Importadora de
+                            Vidrio</h1>
                         <p id="user-info" class="text-gray-600 mt-1">Cargando usuario...</p>
                     </div>
                     <div class="flex items-center gap-3 flex-wrap justify-end">
-                        <button id="view-all-loans-btn" class="header-btn bg-blue-600 text-white hover:bg-blue-700 relative hidden">Préstamos Pendientes<span id="header-loan-badge" class="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full h-6 w-6 flex items-center justify-center hidden"></span></button>
-                        <button id="loan-request-btn" class="header-btn bg-yellow-500 text-white hover:bg-yellow-600 hidden">Solicitar Préstamo</button>
-                        <button id="summary-btn" class="header-btn bg-green-600 text-white hover:bg-green-700 hidden">Resumen</button>
-                        <button id="edit-profile-btn" class="header-btn bg-gray-700 text-white hover:bg-gray-800">Editar Perfil</button>
-                        <button id="logout-btn" class="header-btn bg-red-500 text-white hover:bg-red-600">Cerrar Sesión</button>
+                        <button id="view-all-loans-btn"
+                            class="header-btn bg-blue-600 text-white hover:bg-blue-700 relative hidden">Préstamos
+                            Pendientes<span id="header-loan-badge"
+                                class="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full h-6 w-6 flex items-center justify-center hidden"></span></button>
+                        <button id="loan-request-btn"
+                            class="header-btn bg-yellow-500 text-white hover:bg-yellow-600 hidden">Solicitar
+                            Préstamo</button>
+                        <button id="summary-btn"
+                            class="header-btn bg-green-600 text-white hover:bg-green-700 hidden">Resumen</button>
+                        <button id="edit-profile-btn" class="header-btn bg-gray-700 text-white hover:bg-gray-800">Editar
+                            Perfil</button>
+                        <button id="logout-btn" class="header-btn bg-red-500 text-white hover:bg-red-600">Cerrar
+                            Sesión</button>
                     </div>
                 </div>
             </header>
 
             <div class="border-b border-gray-200 mb-6">
                 <nav id="main-nav" class="-mb-px flex space-x-6 overflow-x-auto">
-                    <button id="tab-remisiones" class="tab-btn active py-4 px-1 text-lg font-semibold text-gray-500 hover:text-gray-800 whitespace-nowrap">Remisiones</button>
-                    <button id="tab-facturacion" class="tab-btn py-4 px-1 text-lg font-semibold text-gray-500 hover:text-gray-800 whitespace-nowrap">Facturación</button>
-                    <button id="tab-inventario" class="tab-btn py-4 px-1 text-lg font-semibold text-gray-500 hover:text-gray-800 whitespace-nowrap">Inventario</button>
-                    <button id="tab-clientes" class="tab-btn py-4 px-1 text-lg font-semibold text-gray-500 hover:text-gray-800 whitespace-nowrap">Clientes</button>
-                    <button id="tab-gastos" class="tab-btn py-4 px-1 text-lg font-semibold text-gray-500 hover:text-gray-800 whitespace-nowrap">Gastos</button>
-                    <button id="tab-proveedores" class="tab-btn py-4 px-1 text-lg font-semibold text-gray-500 hover:text-gray-800 whitespace-nowrap">Proveedores</button>
-                    <button id="tab-empleados" class="tab-btn py-4 px-1 text-lg font-semibold text-gray-500 hover:text-gray-800 whitespace-nowrap hidden">Empleados</button>
+                    <button id="tab-remisiones" class="tab-btn active ...">Remisiones</button>
+                    <button id="tab-facturacion" class="tab-btn ...">Facturación</button>
+                    <button id="tab-inventario" class="tab-btn ...">Inventario</button>
+
+                    <button id="tab-items"
+                        class="tab-btn py-4 px-1 text-lg font-semibold text-gray-500 hover:text-gray-800 whitespace-nowrap">Ítems</button>
+
+                    <button id="tab-clientes" class="tab-btn ...">Clientes</button>
+                    <button id="tab-gastos" class="tab-btn ...">Gastos</button>
+                    <button id="tab-proveedores" class="tab-btn ...">Proveedores</button>
+                    <button id="tab-empleados" class="tab-btn ...">Empleados</button>
                 </nav>
             </div>
 
@@ -93,6 +106,9 @@
                 <div id="view-remisiones"></div>
                 <div id="view-facturacion" class="hidden"></div>
                 <div id="view-inventario" class="hidden"></div>
+
+                <div id="view-items" class="hidden"></div>
+
                 <div id="view-clientes" class="hidden"></div>
                 <div id="view-gastos" class="hidden"></div>
                 <div id="view-proveedores" class="hidden"></div>
@@ -107,10 +123,11 @@
             </div>
         </div>
     </div>
-    
+
     <script type="module" src="js/app.js"></script>
 
-    <div id="policy-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 hidden z-50">
+    <div id="policy-modal"
+        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 hidden z-50">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl flex flex-col" style="height: 80vh;">
             <div class="flex justify-between items-center p-4 border-b">
                 <h2 class="text-xl font-semibold">Política de Tratamiento de Datos</h2>
