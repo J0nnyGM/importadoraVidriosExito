@@ -1,14 +1,13 @@
-// functions/index.js (Versión con Permisos de Inventario)
-
+// index.js (en tu carpeta /functions)
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const sgMail = require("@sendgrid/mail");
 const { jsPDF } = require("jspdf");
 require("jspdf-autotable");
 const axios = require("axios");
+const { PDFDocument, rgb, StandardFonts } = require("pdf-lib"); // <-- Nueva librería para dibujar
 
 admin.initializeApp();
-
 const db = admin.firestore();
 
 // Configurar SendGrid
@@ -745,6 +744,130 @@ exports.applyDiscount = functions.https.onCall(async (data, context) => {
     }
 });
 
+exports.generateRemisionPDF = functions.firestore
+    .document("remisiones/{remisionId}")
+    .onCreate(async (snap, context) => {
+        const remisionData = snap.data();
+        const remisionId = context.params.remisionId;
+
+        try {
+            // --- INICIO DE LA CREACIÓN DEL DOCUMENTO MULTIPÁGINA ---
+            const pdfDocFinal = await PDFDocument.create();
+            const font = await pdfDocFinal.embedFont(StandardFonts.Helvetica);
+            const fontBold = await pdfDocFinal.embedFont(StandardFonts.HelveticaBold);
+
+            // --- PÁGINA 1: REMISIÓN DE SERVICIO (Creada con jspdf) ---
+            const remisionCreator = new jsPDF();
+            // Encabezado
+            remisionCreator.setFont("helvetica", "bold").setFontSize(20).text("Remisión de Servicio", remisionCreator.internal.pageSize.getWidth() / 2, 20, { align: "center" });
+            remisionCreator.setFont("helvetica", "normal").setFontSize(9).text("IMPORTADORA DE VIDRIOS ÉXITO | NIT: 1.000.000.000-1 | Tel: 300 123 4567", remisionCreator.internal.pageSize.getWidth() / 2, 28, { align: "center" });
+            remisionCreator.setFontSize(16).setFont("helvetica", "bold").text(`N°: ${remisionData.numeroRemision}`, remisionCreator.internal.pageSize.getWidth() - 20, 45, { align: "right" });
+            
+            // Datos Remisión y Cliente
+            remisionCreator.setLineWidth(0.5).line(20, 55, remisionCreator.internal.pageSize.getWidth() - 20, 55);
+            remisionCreator.setFontSize(11).setFont("helvetica", "bold").text("Cliente:", 20, 65);
+            remisionCreator.setFont("helvetica", "normal").text(remisionData.clienteNombre, 40, 65);
+            remisionCreator.setFont("helvetica", "bold").text("Fecha Recibido:", 120, 65);
+            remisionCreator.setFont("helvetica", "normal").text(remisionData.fechaRecibido, 155, 65);
+            remisionCreator.setFont("helvetica", "bold").text("Fecha Entrega:", 120, 72);
+            remisionCreator.setFont("helvetica", "normal").text(remisionData.fechaEntrega || 'Pendiente', 155, 72);
+            remisionCreator.line(20, 80, remisionCreator.internal.pageSize.getWidth() - 20, 80);
+
+            // Tabla de Ítems y Cargos
+            const tableBody = [];
+            (remisionData.items || []).forEach(item => {
+                const desc = item.tipo === 'Completa' ? item.descripcion : `${item.descripcion} (Cortes según anexo)`;
+                tableBody.push([item.cantidad, desc, `$ ${item.valorUnitario.toLocaleString('es-CO')}`, `$ ${item.valorTotal.toLocaleString('es-CO')}`]);
+            });
+            (remisionData.cargosAdicionales || []).forEach(cargo => {
+                tableBody.push([1, cargo.descripcion, `$ ${cargo.valorUnitario.toLocaleString('es-CO')}`, `$ ${cargo.valorTotal.toLocaleString('es-CO')}`]);
+            });
+            
+            remisionCreator.autoTable({ startY: 90, head: [['Cant.', 'Descripción', 'Vlr. Unit.', 'Vlr. Total']], body: tableBody, theme: 'grid' });
+
+            // Totales y Pie de Página
+            let finalY = remisionCreator.lastAutoTable.finalY + 15;
+            remisionCreator.setFontSize(11).setFont("helvetica", "bold").text("Subtotal:", 130, finalY);
+            remisionCreator.setFont("helvetica", "normal").text(`$ ${remisionData.subtotal.toLocaleString('es-CO')}`, 195, finalY, { align: "right" });
+            remisionCreator.setFont("helvetica", "bold").text(`IVA (${remisionData.incluyeIVA ? '19%' : '0%'}):`, 130, finalY + 7);
+            remisionCreator.setFont("helvetica", "normal").text(`$ ${remisionData.valorIVA.toLocaleString('es-CO')}`, 195, finalY + 7, { align: "right" });
+            remisionCreator.setFont("helvetica", "bold").text("TOTAL:", 130, finalY + 14);
+            remisionCreator.text(`$ ${remisionData.valorTotal.toLocaleString('es-CO')}`, 195, finalY + 14, { align: "right" });
+
+            remisionCreator.setFontSize(8).setFont("helvetica", "bold").text("Firma y Sello de Recibido:", 20, remisionCreator.internal.pageSize.height - 30);
+            remisionCreator.line(20, remisionCreator.internal.pageSize.height - 35, 100, remisionCreator.internal.pageSize.height - 35);
+            remisionCreator.setFont("helvetica", "normal").setTextColor(150).text("NO SE ENTREGA TRABAJO SINO HA SIDO CANCELADO. DESPUES DE 8 DIAS NO SE RESPONDE POR MERCANCIA.", remisionCreator.internal.pageSize.getWidth() / 2, remisionCreator.internal.pageSize.height - 15, { align: 'center' });
+            
+            // Añadir la página creada con jspdf al documento principal
+            const [remisionPage] = await pdfDocFinal.copyPages(await PDFDocument.load(remisionCreator.output('arraybuffer')), [0]);
+            pdfDocFinal.addPage(remisionPage);
+
+
+            // --- PÁGINAS DE PRODUCCIÓN (SI HAY CORTES) ---
+            const itemsCortados = remisionData.items.filter(item => item.tipo === 'Cortada' && item.planoDespiece);
+            if (itemsCortados.length > 0) {
+                // --- PÁGINA 2: RESUMEN DE CORTES EN TABLA ---
+                const resumenCreator = new jsPDF();
+                resumenCreator.setFont("helvetica", "bold").setFontSize(18).text("Anexo de Producción: Resumen de Cortes", resumenCreator.internal.pageSize.getWidth() / 2, 20, { align: "center" });
+                
+                let resumenTableBody = [];
+                let corteIdGlobal = 1;
+                itemsCortados.forEach(item => {
+                    item.planoDespiece.forEach(lamina => {
+                        lamina.cortes.forEach(corte => {
+                            resumenTableBody.push([`#${corteIdGlobal++}`, item.descripcion, corte.descripcion]);
+                        });
+                    });
+                });
+                resumenCreator.autoTable({ startY: 30, head: [['ID de Corte', 'Material', 'Medida Solicitada']], body: resumenTableBody, theme: 'striped' });
+                
+                const [resumenPage] = await pdfDocFinal.copyPages(await PDFDocument.load(resumenCreator.output('arraybuffer')), [0]);
+                pdfDocFinal.addPage(resumenPage);
+
+                // --- PÁGINAS 3+: PLANOS DE DESPIECE ---
+                for (const item of itemsCortados) {
+                    const itemDataSnap = await db.collection('items').doc(item.itemId).get();
+                    const itemData = itemDataSnap.data();
+                    const anchoMaestra = itemData.ancho;
+                    const altoMaestra = itemData.alto;
+                    for (const lamina of item.planoDespiece) {
+                        const page = pdfDocFinal.addPage();
+                        page.drawText(`Plano de Corte - Lámina ${lamina.numero} de ${item.planoDespiece.length}`, { x: 50, y: 800, font: fontBold, size: 16 });
+                        page.drawText(`Material: ${item.descripcion} (${anchoMaestra}x${altoMaestra}mm)`, { x: 50, y: 780, font, size: 10 });
+                        
+                        const escala = 500 / Math.max(anchoMaestra, altoMaestra);
+                        const xOffset = 70, yOffset = 250;
+
+                        page.drawRectangle({ x: xOffset, y: yOffset, width: anchoMaestra * escala, height: altoMaestra * escala, borderColor: rgb(0.7, 0.7, 0.7), borderWidth: 1 });
+                        
+                        lamina.cortes.forEach(corte => {
+                            page.drawRectangle({ x: xOffset + corte.x * escala, y: yOffset + corte.y * escala, width: corte.ancho * escala, height: corte.alto * escala, borderColor: rgb(0, 0, 0), borderWidth: 0.5, color: rgb(0.2, 0.6, 0.8), opacity: 0.2 });
+                            const centroX = xOffset + (corte.x + corte.ancho / 2) * escala;
+                            const centroY = yOffset + (corte.y + corte.alto / 2) * escala;
+                            page.drawText(`#${corte.id}`, { x: centroX - 8, y: centroY + 2, font: fontBold, size: 8, color: rgb(0, 0, 0) });
+                            page.drawText(corte.descripcion, { x: centroX - 15, y: centroY - 8, font, size: 6, color: rgb(0, 0, 0) });
+                        });
+                    }
+                }
+            }
+            
+            // --- GUARDADO FINAL ---
+            const finalPdfBytes = await pdfDocFinal.save();
+            const bucket = admin.storage().bucket();
+            const filePath = `remisiones/${remisionId}.pdf`;
+            const file = bucket.file(filePath);
+            await file.save(finalPdfBytes, { contentType: 'application/pdf' });
+            const pdfUrl = await file.getSignedUrl({ action: 'read', expires: '03-09-2491' }).then(urls => urls[0]);
+            
+            return db.collection("remisiones").doc(remisionId).update({ pdfUrl: pdfUrl });
+
+        } catch (error) {
+            console.error("Error al generar el PDF de remisión:", error);
+            return null;
+        }
+    });
+
+
 
 exports.onResendEmailRequest = functions.region("us-central1").firestore
     .document("resendQueue/{queueId}")
@@ -836,44 +959,6 @@ exports.updateEmployeeDocument = functions.https.onCall(async (data, context) =>
         throw new functions.https.HttpsError("internal", "No se pudo actualizar el documento del empleado.");
     }
 });
-/**
- * Se activa cuando se crea un nuevo documento de importación.
- * Suma la cantidad de la importación al stock del ítem correspondiente.
- */
-exports.onImportacionCreate = functions.firestore
-    .document("importaciones/{importacionId}")
-    .onCreate(async (snap, context) => {
-        const importacionData = snap.data();
-        const { items } = importacionData; // Obtenemos el array de ítems
-        const log = (message) => functions.logger.log(`[Importacion ${context.params.importacionId}] ${message}`);
-
-        if (!items || !Array.isArray(items) || items.length === 0) {
-            log("No se actualiza el stock. No se encontraron ítems en la importación.");
-            return null;
-        }
-
-        const batch = admin.firestore().batch();
-
-        items.forEach(item => {
-            const { itemId, cantidad } = item;
-            if (itemId && cantidad > 0) {
-                const itemRef = admin.firestore().collection("items").doc(itemId);
-                batch.update(itemRef, {
-                    stock: admin.firestore.FieldValue.increment(cantidad)
-                });
-                log(`Preparando actualización de stock para el ítem ${itemId}: +${cantidad} unidades.`);
-            }
-        });
-
-        try {
-            await batch.commit();
-            log(`Stock actualizado para ${items.length} tipo(s) de ítem.`);
-            return null;
-        } catch (error) {
-            functions.logger.error(`Error al ejecutar el batch para actualizar el stock:`, error);
-            return null;
-        }
-    });
 
 /**
  * Se activa cuando se actualiza una importación (ej. al añadir un abono).

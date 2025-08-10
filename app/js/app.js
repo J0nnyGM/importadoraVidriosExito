@@ -39,7 +39,7 @@ const loginForm = document.getElementById('login-form');
 const registerForm = document.getElementById('register-form');
 let currentUser = null;
 let currentUserData = null;
-let allClientes = [], allProveedores = [], allGastos = [], allRemisiones = [], allUsers = [], allItems = [], allPendingLoans = [], allImportaciones = [], profitLossChart = null;
+let allClientes = [], allProveedores = [], allGastos = [], allRemisiones = [], allUsers = [], allItems = [], allPendingLoans = [], allImportaciones = [], profitLossChart = null, allItemAverageCosts = {}, allComprasNacionales = [];
 let dynamicElementCounter = 0;
 let isRegistering = false;
 let modalTimeout;
@@ -60,14 +60,17 @@ const DOCUMENTOS_IMPORTACION = [
     { id: 'seguroDoc', name: 'Póliza de Seguro' }
 ];
 
+// Cerca del inicio de tu archivo, busca esta constante y reemplázala:
 const GASTOS_NACIONALIZACION = [
+    { id: 'iva', name: 'IVA' },           // <-- AÑADIDO
+    { id: 'arancel', name: 'Arancel' },   // <-- AÑADIDO
     { id: 'naviera', name: 'Naviera' },
     { id: 'puerto', name: 'Puerto' },
     { id: 'aduana', name: 'Aduana' },
     { id: 'transporte', name: 'Transporte' },
     { id: 'montacarga', name: 'Montacarga' }
-];
 
+];
 // --- MANEJO DE AUTENTICACIÓN Y VISTAS ---
 let activeListeners = [];
 function unsubscribeAllListeners() {
@@ -142,7 +145,8 @@ function loadAllData() {
     activeListeners.push(loadRemisiones());
     activeListeners.push(loadGastos());
     activeListeners.push(loadImportaciones());
-    activeListeners.push(loadItems()); // <-- ASEGÚRATE DE QUE ESTA LÍNEA EXISTA
+    activeListeners.push(loadItems());
+    activeListeners.push(loadComprasNacionales()); // <-- AÑADE ESTA LÍNEA
 
     if (currentUserData && currentUserData.role === 'admin') {
         activeListeners.push(loadEmpleados());
@@ -175,14 +179,33 @@ function loadViewTemplates() {
 
     // REEMPLAZA la línea de 'view-inventario'.innerHTML con esta versión:
     document.getElementById('view-inventario').innerHTML = `
-    <div class="bg-white p-6 rounded-xl shadow-md">
-        <div class="flex flex-col sm:flex-row justify-between sm:items-center mb-4 gap-4">
-            <h2 class="text-xl font-semibold">Importaciones</h2>
-            <button id="add-importacion-btn" class="bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-indigo-700 w-full sm:w-auto">+ Nueva Importación</button>
+    <div class="bg-white p-6 rounded-xl shadow-md max-w-7xl mx-auto">
+        <div class="border-b border-gray-200 mb-6">
+            <nav id="inventario-nav" class="-mb-px flex space-x-6">
+                <button id="tab-importaciones" class="dashboard-tab-btn active py-3 px-1 font-semibold">Importaciones</button>
+                <button id="tab-nacional" class="dashboard-tab-btn py-3 px-1 font-semibold">Compras Nacionales</button>
+            </nav>
         </div>
-        <div id="importaciones-list" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+        <div id="view-importaciones-content">
+            <div class="flex flex-col sm:flex-row justify-between sm:items-center mb-4 gap-4">
+                <h2 class="text-xl font-semibold">Gestión de Importaciones</h2>
+                <button id="add-importacion-btn" class="bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-indigo-700 w-full sm:w-auto">+ Nueva Importación</button>
             </div>
+            <div id="importaciones-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6"></div>
+            </div>
+
+        <div id="view-nacional-content" class="hidden">
+            <div class="flex flex-col sm:flex-row justify-between sm:items-center mb-4 gap-4">
+                <h2 class="text-xl font-semibold">Gestión de Compras Nacionales</h2>
+                <button id="add-nacional-btn" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 w-full sm:w-auto">+ Nueva Compra Nacional</button>
+            </div>
+            <div id="nacional-list" class="space-y-4">
+                <p class="text-center text-gray-500 py-8">Aún no se han registrado compras nacionales.</p>
+            </div>
+        </div>
     </div>`;
+
 
     document.getElementById('view-items').innerHTML = `
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
@@ -195,6 +218,7 @@ function loadViewTemplates() {
                     <input type="number" id="nuevo-item-ancho" placeholder="Ancho (mm)" class="w-full p-3 border border-gray-300 rounded-lg" required min="0">
                     <input type="number" id="nuevo-item-alto" placeholder="Alto (mm)" class="w-full p-3 border border-gray-300 rounded-lg" required min="0">
                 </div>
+                <input type="number" id="nuevo-item-laminas-por-caja" placeholder="Láminas por Caja" class="w-full p-3 border border-gray-300 rounded-lg" required min="1">
                 <input type="number" id="nuevo-item-stock" placeholder="Stock Inicial" class="w-full p-3 border border-gray-300 rounded-lg" required min="0">
                 <button type="submit" class="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-700">Guardar Ítem</button>
             </form>
@@ -210,8 +234,56 @@ function loadViewTemplates() {
 `;
     // Se añade el listener para el enlace recién creado
     document.getElementById('show-login-link-register').addEventListener('click', (e) => { e.preventDefault(); registerForm.classList.add('hidden'); loginForm.classList.remove('hidden'); });
+    document.getElementById('view-remisiones').innerHTML = `
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
+            <div id="remision-form-container" class="lg:col-span-1 bg-white p-6 rounded-xl shadow-md">
+                <h2 class="text-xl font-semibold mb-4">Nueva Remisión</h2>
+                <form id="remision-form" class="space-y-4">
+                    <div class="relative">
+                        <input type="text" id="cliente-search-input" autocomplete="off" placeholder="Buscar y seleccionar cliente..." class="w-full p-3 border border-gray-300 rounded-lg" required>
+                        <input type="hidden" id="cliente-id-hidden" name="clienteId">
+                        <div id="cliente-search-results" class="search-results hidden"></div>
+                    </div>
+                    <div>
+                        <label for="fecha-recibido" class="block text-sm font-medium text-gray-700">Fecha Remisión</label>
+                        <input type="date" id="fecha-recibido" class="w-full p-3 border border-gray-300 rounded-lg mt-1 bg-gray-100" readonly>
+                    </div>
+                    <div class="border-t border-b border-gray-200 py-4">
+                        <h3 class="text-lg font-semibold mb-2">Ítems de la Remisión</h3>
+                        <div id="items-container" class="space-y-4">
+                        </div>
+                        <button type="button" id="add-item-btn" class="mt-4 w-full bg-gray-200 text-gray-700 font-semibold py-2 px-4 rounded-lg hover:bg-gray-300 transition-colors">+ Añadir Ítem</button>
+                    </div>
+                    <select id="forma-pago" class="w-full p-3 border border-gray-300 rounded-lg bg-white" required>
+                        <option value="" disabled selected>Forma de Pago</option>
+                        <option value="Pendiente">Pendiente</option>
+                        <option value="Efectivo">Efectivo</option>
+                        <option value="Nequi">Nequi</option>
+                        <option value="Davivienda">Davivienda</option>
+                        <option value="Bancolombia">Bancolombia</option>
+                        <option value="Consignacion">Consignación</option>
+                    </select>
+                    <div class="bg-gray-50 p-4 rounded-lg space-y-2">
+                        <div class="flex justify-between items-center"><span class="font-medium">Subtotal:</span><span id="subtotal" class="font-bold text-lg">$ 0</span></div>
+                        <div class="flex justify-between items-center"><label for="incluir-iva" class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="incluir-iva" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"><span>Incluir IVA (19%)</span></label><span id="valor-iva" class="font-medium text-gray-600">$ 0</span></div>
+                        <hr>
+                        <div class="flex justify-between items-center text-xl"><span class="font-bold">TOTAL:</span><span id="valor-total" class="font-bold text-indigo-600">$ 0</span></div>
+                    </div>
+                    <button type="submit" class="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors">Guardar Remisión</button>
+                </form>
+            </div>
+            <div id="remisiones-list-container" class="lg:col-span-2 bg-white p-6 rounded-xl shadow-md">
+            <div class="flex flex-col sm:flex-row justify-between sm:items-center mb-4 flex-wrap gap-4">
+            <h2 class="text-xl font-semibold">Historial de Remisiones</h2>
+            <div class="flex items-center gap-2 flex-wrap w-full">
+            <select id="filter-remisiones-month" class="p-2 border rounded-lg bg-white"></select>
+            <select id="filter-remisiones-year" class="p-2 border rounded-lg bg-white"></select>
+            <input type="search" id="search-remisiones" placeholder="Buscar..." class="p-2 border rounded-lg flex-grow"></div>
+            </div><div id="remisiones-list" class="space-y-3">
+            </div>
+            </div>
+            </div>`;
 
-    document.getElementById('view-remisiones').innerHTML = `<div class="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-6xl mx-auto"><div id="remision-form-container" class="lg:col-span-1 bg-white p-6 rounded-xl shadow-md"><h2 class="text-xl font-semibold mb-4">Nueva Remisión</h2><form id="remision-form" class="space-y-4"><div class="relative"><input type="text" id="cliente-search-input" autocomplete="off" placeholder="Buscar y seleccionar cliente..." class="w-full p-3 border border-gray-300 rounded-lg" required><input type="hidden" id="cliente-id-hidden" name="clienteId"><div id="cliente-search-results" class="search-results hidden"></div></div><div><label for="fecha-recibido" class="block text-sm font-medium text-gray-700">Fecha Recibido</label><input type="date" id="fecha-recibido" class="w-full p-3 border border-gray-300 rounded-lg mt-1 bg-gray-100" readonly></div><div class="border-t border-b border-gray-200 py-4"><h3 class="text-lg font-semibold mb-2">Ítems de la Remisión</h3><div id="items-container" class="space-y-4"></div><button type="button" id="add-item-btn" class="mt-4 w-full bg-gray-200 text-gray-700 font-semibold py-2 px-4 rounded-lg hover:bg-gray-300 transition-colors">+ Añadir Ítem</button></div><select id="forma-pago" class="w-full p-3 border border-gray-300 rounded-lg bg-white" required><option value="" disabled selected>Forma de Pago</option><option value="Pendiente">Pendiente</option><option value="Efectivo">Efectivo</option><option value="Nequi">Nequi</option><option value="Davivienda">Davivienda</option><option value="Bancolombia">Bancolombia</option><option value="Consignacion">Consignación</option></select><div class="bg-gray-50 p-4 rounded-lg space-y-2"><div class="flex justify-between items-center"><span class="font-medium">Subtotal:</span><span id="subtotal" class="font-bold text-lg">$ 0</span></div><div class="flex justify-between items-center"><label for="incluir-iva" class="flex items-center space-x-2 cursor-pointer"><input type="checkbox" id="incluir-iva" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"><span>Incluir IVA (19%)</span></label><span id="valor-iva" class="font-medium text-gray-600">$ 0</span></div><hr><div class="flex justify-between items-center text-xl"><span class="font-bold">TOTAL:</span><span id="valor-total" class="font-bold text-indigo-600">$ 0</span></div></div><button type="submit" class="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors">Guardar Remisión</button></form></div><div id="remisiones-list-container" class="lg:col-span-2 bg-white p-6 rounded-xl shadow-md"><div class="flex flex-col sm:flex-row justify-between sm:items-center mb-4 flex-wrap gap-4"><h2 class="text-xl font-semibold">Historial de Remisiones</h2><div class="flex items-center gap-2 flex-wrap w-full"><select id="filter-remisiones-month" class="p-2 border rounded-lg bg-white"></select><select id="filter-remisiones-year" class="p-2 border rounded-lg bg-white"></select><input type="search" id="search-remisiones" placeholder="Buscar..." class="p-2 border rounded-lg flex-grow"></div></div><div id="remisiones-list" class="space-y-3"></div></div></div>`;
     document.getElementById('view-facturacion').innerHTML = `<div class="bg-white p-6 rounded-xl shadow-md max-w-6xl mx-auto"><h2 class="text-2xl font-semibold mb-4">Gestión de Facturación</h2><div class="border-b border-gray-200 mb-6"><nav id="facturacion-nav" class="-mb-px flex space-x-6"><button id="tab-pendientes" class="dashboard-tab-btn active py-3 px-1 font-semibold">Pendientes</button><button id="tab-realizadas" class="dashboard-tab-btn py-3 px-1 font-semibold">Realizadas</button></nav></div><div id="view-pendientes"><h3 class="text-xl font-semibold text-gray-800 mb-4">Remisiones Pendientes de Facturar</h3><div id="facturacion-pendientes-list" class="space-y-3"></div></div><div id="view-realizadas" class="hidden"><h3 class="text-xl font-semibold text-gray-800 mb-4">Remisiones Facturadas</h3><div id="facturacion-realizadas-list" class="space-y-3"></div></div></div>`;
     document.getElementById('view-clientes').innerHTML = `<div class="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-6xl mx-auto"><div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-md"><h2 class="text-xl font-semibold mb-4">Añadir Cliente</h2><form id="add-cliente-form" class="space-y-4"><input type="text" id="nuevo-cliente-nombre" placeholder="Nombre Completo" class="w-full p-3 border border-gray-300 rounded-lg" required><input type="email" id="nuevo-cliente-email" placeholder="Correo" class="w-full p-3 border border-gray-300 rounded-lg" required><input type="tel" id="nuevo-cliente-telefono1" placeholder="Teléfono 1" class="w-full p-3 border border-gray-300 rounded-lg" required><input type="tel" id="nuevo-cliente-telefono2" placeholder="Teléfono 2 (Opcional)" class="w-full p-3 border border-gray-300 rounded-lg"><input type="text" id="nuevo-cliente-nit" placeholder="NIT (Opcional)" class="w-full p-3 border border-gray-300 rounded-lg"><button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700">Registrar</button></form></div><div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-md"><div class="flex justify-between items-center mb-4"><h2 class="text-xl font-semibold">Clientes</h2><input type="search" id="search-clientes" placeholder="Buscar..." class="p-2 border rounded-lg"></div><div id="clientes-list" class="space-y-3"></div></div></div>`;
     document.getElementById('view-proveedores').innerHTML = `<div class="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-6xl mx-auto"><div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-md"><h2 class="text-xl font-semibold mb-4">Añadir Proveedor</h2><form id="add-proveedor-form" class="space-y-4"><input type="text" id="nuevo-proveedor-nombre" placeholder="Nombre del Proveedor" class="w-full p-3 border border-gray-300 rounded-lg" required><input type="text" id="nuevo-proveedor-contacto" placeholder="Nombre de Contacto" class="w-full p-3 border border-gray-300 rounded-lg"><input type="tel" id="nuevo-proveedor-telefono" placeholder="Teléfono" class="w-full p-3 border border-gray-300 rounded-lg"><input type="email" id="nuevo-proveedor-email" placeholder="Correo" class="w-full p-3 border border-gray-300 rounded-lg"><button type="submit" class="w-full bg-teal-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-teal-700">Registrar</button></form></div><div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-md"><div class="flex justify-between items-center mb-4"><h2 class="text-xl font-semibold">Proveedores</h2><input type="search" id="search-proveedores" placeholder="Buscar..." class="p-2 border rounded-lg"></div><div id="proveedores-list" class="space-y-3"></div></div></div>`;
@@ -263,6 +335,115 @@ function loadInitialData() {
 
 loginForm.addEventListener('submit', handleLoginSubmit); // Asegúrate de tener la función handleLoginSubmit
 registerForm.addEventListener('submit', handleRegisterSubmit); // Asegúrate de tener la función handleRegisterSubmit
+
+/**
+ * --- NUEVA FUNCIÓN ---
+ * Maneja la actualización de una fecha en el documento de la importación.
+ * @param {string} importacionId - El ID de la importación.
+ * @param {string} fieldId - El ID del campo de fecha ('fecha-llegada-puerto' o 'fecha-llegada-bodega').
+ * @param {string} newDate - La nueva fecha seleccionada.
+ */
+async function handleDateUpdate(importacionId, fieldId, newDate) {
+    const fieldMap = {
+        'fecha-llegada-puerto': 'fechaLlegadaPuerto',
+        'fecha-llegada-bodega': 'fechaLlegadaBodega'
+    };
+    const dbField = fieldMap[fieldId];
+    if (!dbField) return;
+
+    showTemporaryMessage("Actualizando fecha...", "info");
+    try {
+        const importacionRef = doc(db, "importaciones", importacionId);
+        const updateData = {};
+        updateData[dbField] = newDate;
+        await updateDoc(importacionRef, updateData);
+
+        const importacionIndex = allImportaciones.findIndex(i => i.id === importacionId);
+        if (importacionIndex !== -1) {
+            allImportaciones[importacionIndex][dbField] = newDate;
+        }
+        showTemporaryMessage("Fecha actualizada.", "success");
+    } catch (error) {
+        console.error("Error al actualizar fecha:", error);
+        showTemporaryMessage("Error al actualizar la fecha.", "error");
+    }
+}
+
+/**
+ * --- VERSIÓN FINAL Y SEGURA ---
+ * Maneja la actualización del estado logístico.
+ * Si el estado cambia a "En Bodega" Y la importación no ha sido procesada antes,
+ * actualiza el stock de todos los ítems de forma atómica.
+ * @param {string} importacionId - El ID de la importación.
+ * @param {string} newStatus - El nuevo estado ('En Puerto' o 'En Bodega').
+ */
+async function handleEstadoUpdate(importacionId, newStatus) {
+    const fecha = new Date().toISOString().split('T')[0];
+    let updateData = { estadoLogistico: newStatus };
+    let fieldToUpdate = '';
+
+    if (newStatus === 'En Puerto') {
+        fieldToUpdate = 'fechaLlegadaPuerto';
+    } else if (newStatus === 'En Bodega') {
+        fieldToUpdate = 'fechaLlegadaBodega';
+    }
+
+    if (!fieldToUpdate) return;
+    updateData[fieldToUpdate] = fecha;
+
+    const importacionActual = allImportaciones.find(i => i.id === importacionId);
+    if (!importacionActual) {
+        return showModalMessage("Error: No se encontró la importación para actualizar.");
+    }
+
+    // VERIFICACIÓN CLAVE: Si ya se procesó, no hacer nada.
+    if (newStatus === 'En Bodega' && importacionActual.stockActualizado) {
+        showModalMessage("Esta importación ya fue sumada al inventario.", "info");
+        return;
+    }
+
+    showModalMessage(`Actualizando a "${newStatus}"...`, true);
+
+    try {
+        const importacionRef = doc(db, "importaciones", importacionId);
+        const batch = writeBatch(db);
+
+        // Si el estado es "En Bodega", añade la actualización de stock al batch
+        if (newStatus === 'En Bodega' && importacionActual.items) {
+            updateData.stockActualizado = true; // Añadir una bandera para no volver a procesar
+            importacionActual.items.forEach(itemImportado => {
+                const itemRef = doc(db, "items", itemImportado.itemId);
+                const itemEnStock = allItems.find(i => i.id === itemImportado.itemId);
+
+                if (itemEnStock) {
+                    const nuevoStock = (itemEnStock.stock || 0) + itemImportado.cantidad;
+                    batch.update(itemRef, { stock: nuevoStock });
+                }
+            });
+            showTemporaryMessage("¡Estado y stock actualizados con éxito!", "success");
+        } else {
+            showTemporaryMessage("Estado actualizado con éxito.", "success");
+        }
+
+        // Actualizar el documento de la importación
+        batch.update(importacionRef, updateData);
+
+        // Ejecutar todas las operaciones
+        await batch.commit();
+
+        // Refrescar la interfaz
+        hideModal();
+        const importacionIndex = allImportaciones.findIndex(i => i.id === importacionId);
+        if (importacionIndex !== -1) {
+            allImportaciones[importacionIndex] = { ...allImportaciones[importacionIndex], ...updateData };
+            showImportacionModal(allImportaciones[importacionIndex]);
+        }
+
+    } catch (error) {
+        console.error(`Error al marcar "${newStatus}":`, error);
+        showModalMessage("Error al actualizar el estado.");
+    }
+}
 
 // --- LÓGICA DE LOGIN/REGISTRO/LOGOUT ---
 function handleLoginSubmit(e) {
@@ -361,73 +542,36 @@ document.getElementById('logout-btn').addEventListener('click', () => {
 
 // --- LÓGICA DE NAVEGACIÓN Y EVENTOS ---
 function setupEventListeners() {
-    const tabs = {
-        remisiones: document.getElementById('tab-remisiones'),
-        facturacion: document.getElementById('tab-facturacion'),
-        inventario: document.getElementById('tab-inventario'),
-        clientes: document.getElementById('tab-clientes'),
-        gastos: document.getElementById('tab-gastos'),
-        proveedores: document.getElementById('tab-proveedores'),
-        empleados: document.getElementById('tab-empleados'),
-        items: document.getElementById('tab-items') // <-- AÑADIR
-    };
-    const views = {
-        remisiones: document.getElementById('view-remisiones'),
-        facturacion: document.getElementById('view-facturacion'),
-        inventario: document.getElementById('view-inventario'),
-        clientes: document.getElementById('view-clientes'),
-        gastos: document.getElementById('view-gastos'),
-        proveedores: document.getElementById('view-proveedores'),
-        empleados: document.getElementById('view-empleados'),
-        items: document.getElementById('view-items') // <-- AÑADIR
-    }; Object.keys(tabs).forEach(key => { if (tabs[key]) { tabs[key].addEventListener('click', () => switchView(key, tabs, views)) } });
-
+    const tabs = { remisiones: document.getElementById('tab-remisiones'), facturacion: document.getElementById('tab-facturacion'), inventario: document.getElementById('tab-inventario'), clientes: document.getElementById('tab-clientes'), gastos: document.getElementById('tab-gastos'), proveedores: document.getElementById('tab-proveedores'), empleados: document.getElementById('tab-empleados'), items: document.getElementById('tab-items') };
+    const views = { remisiones: document.getElementById('view-remisiones'), facturacion: document.getElementById('view-facturacion'), inventario: document.getElementById('view-inventario'), clientes: document.getElementById('view-clientes'), gastos: document.getElementById('view-gastos'), proveedores: document.getElementById('view-proveedores'), empleados: document.getElementById('view-empleados'), items: document.getElementById('view-items') };
+    Object.keys(tabs).forEach(key => { if (tabs[key]) { tabs[key].addEventListener('click', () => switchView(key, tabs, views)) } });
+    const importacionesTab = document.getElementById('tab-importaciones');
+    const nacionalTab = document.getElementById('tab-nacional');
+    const importacionesView = document.getElementById('view-importaciones-content');
+    const nacionalView = document.getElementById('view-nacional-content');
+    if (importacionesTab && nacionalTab) {
+        importacionesTab.addEventListener('click', () => { importacionesTab.classList.add('active'); nacionalTab.classList.remove('active'); importacionesView.classList.remove('hidden'); nacionalView.classList.add('hidden'); });
+        nacionalTab.addEventListener('click', () => { nacionalTab.classList.add('active'); importacionesTab.classList.remove('active'); nacionalView.classList.remove('hidden'); importacionesView.classList.add('hidden'); });
+    }
+    const remisionForm = document.getElementById('remision-form');
+    if (remisionForm) {
+        remisionForm.addEventListener('click', (e) => {
+            const target = e.target;
+            if (target.id === 'add-item-btn') { document.getElementById('items-container').appendChild(createItemElement()); }
+            if (target.closest('.remove-item-btn')) { target.closest('.item-row').remove(); }
+            if (target.classList.contains('tipo-corte-radio')) { const itemRow = target.closest('.item-row'); const completaDiv = itemRow.querySelector('.completa-container'); const cortadaDiv = itemRow.querySelector('.cortada-container'); if (target.value === 'completa') { completaDiv.classList.remove('hidden'); cortadaDiv.classList.add('hidden'); } else { completaDiv.classList.add('hidden'); cortadaDiv.classList.remove('hidden'); if (cortadaDiv.querySelector('.cortes-list').children.length === 0) { cortadaDiv.querySelector('.cortes-list').appendChild(createCutElement()); } } }
+            if (target.closest('.add-cut-btn')) { target.closest('.cortada-container').querySelector('.cortes-list').appendChild(createCutElement()); }
+            if (target.closest('.remove-cut-btn')) { target.closest('.cut-row').remove(); }
+        });
+        remisionForm.addEventListener('submit', handleRemisionSubmit);
+        document.getElementById('incluir-iva').addEventListener('input', calcularTotales);
+    }
     document.getElementById('add-importacion-btn').addEventListener('click', () => showImportacionModal());
-    const importacionesList = document.getElementById('importaciones-list');
-    if (importacionesList) {
-        importacionesList.addEventListener('click', (e) => {
-            if (e.target.classList.contains('details-importacion-btn')) {
-                const importacionId = e.target.dataset.id;
-                const importacion = allImportaciones.find(imp => imp.id === importacionId);
-                if (importacion) { showImportacionModal(importacion); }
-            }
-        });
-    }
-    registerForm.addEventListener('submit', handleRegisterSubmit);
-    document.getElementById('show-login-link-register').addEventListener('click', (e) => { e.preventDefault(); registerForm.classList.add('hidden'); loginForm.classList.remove('hidden'); });
-    const policyModal = document.getElementById('policy-modal');
-    const facturacionPendientesTab = document.getElementById('tab-pendientes');
-    const facturacionRealizadasTab = document.getElementById('tab-realizadas');
-    const facturacionPendientesView = document.getElementById('view-pendientes');
-    const facturacionRealizadasView = document.getElementById('view-realizadas');
-    if (facturacionPendientesTab) {
-        facturacionPendientesTab.addEventListener('click', () => {
-            facturacionPendientesTab.classList.add('active');
-            facturacionRealizadasTab.classList.remove('active');
-            facturacionPendientesView.classList.remove('hidden');
-            facturacionRealizadasView.classList.add('hidden');
-        });
-    }
-    if (facturacionRealizadasTab) {
-        facturacionRealizadasTab.addEventListener('click', () => {
-            facturacionRealizadasTab.classList.add('active');
-            facturacionPendientesTab.classList.remove('active');
-            facturacionRealizadasView.classList.remove('hidden');
-            facturacionPendientesView.classList.add('hidden');
-        });
-    }
-
+    document.getElementById('add-nacional-btn').addEventListener('click', () => showNacionalModal());
     document.getElementById('add-cliente-form').addEventListener('submit', async (e) => { e.preventDefault(); const nuevoCliente = { nombre: document.getElementById('nuevo-cliente-nombre').value, email: document.getElementById('nuevo-cliente-email').value, telefono1: document.getElementById('nuevo-cliente-telefono1').value, telefono2: document.getElementById('nuevo-cliente-telefono2').value, nit: document.getElementById('nuevo-cliente-nit').value || '', creadoEn: new Date() }; showModalMessage("Registrando cliente...", true); try { await addDoc(collection(db, "clientes"), nuevoCliente); e.target.reset(); hideModal(); showModalMessage("¡Cliente registrado!", false, 2000); } catch (error) { console.error(error); hideModal(); showModalMessage("Error al registrar cliente."); } });
     document.getElementById('add-proveedor-form').addEventListener('submit', handleProveedorSubmit);
     document.getElementById('add-gasto-form').addEventListener('submit', handleGastoSubmit);
-    document.getElementById('remision-form').addEventListener('submit', handleRemisionSubmit);
     document.getElementById('add-item-form').addEventListener('submit', handleItemSubmit);
-    document.getElementById('add-item-btn').addEventListener('click', () => {
-        const itemsContainer = document.getElementById('items-container');
-        if (itemsContainer) itemsContainer.appendChild(createItemElement());
-    });
-    const ivaCheckbox = document.getElementById('incluir-iva');
-    if (ivaCheckbox) ivaCheckbox.addEventListener('input', calcularTotales);
     document.getElementById('summary-btn').addEventListener('click', showDashboardModal);
     document.getElementById('edit-profile-btn').addEventListener('click', showEditProfileModal);
     document.getElementById('loan-request-btn').addEventListener('click', showLoanRequestModal);
@@ -485,6 +629,7 @@ function setupEventListeners() {
     document.getElementById('view-all-loans-btn').addEventListener('click', () => {
         showAllLoansModal(allPendingLoans);
     });
+
 }
 
 function switchView(viewName, tabs, views) {
@@ -555,6 +700,80 @@ function loadItems() {
         renderItems();
     });
 }
+
+/**
+ * --- NUEVA FUNCIÓN ---
+ * Carga todas las compras nacionales desde Firestore y las almacena en la variable global.
+ */
+function loadComprasNacionales() {
+    const q = query(collection(db, "comprasNacionales"), orderBy("fecha", "desc"));
+    return onSnapshot(q, (snapshot) => {
+        allComprasNacionales = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        renderComprasNacionales(); // Llama a la función para mostrar los datos
+    });
+}
+
+/**
+ * --- NUEVA FUNCIÓN ---
+ * Renderiza la lista de compras nacionales en la pestaña de "Inventario".
+ */
+function renderComprasNacionales() {
+    const container = document.getElementById('nacional-list');
+    if (!container) return;
+
+    if (allComprasNacionales.length === 0) {
+        container.innerHTML = '<p class="text-center text-gray-500 py-8">Aún no se han registrado compras nacionales.</p>';
+        return;
+    }
+
+    container.innerHTML = ''; // Limpiar la lista antes de volver a dibujar
+    allComprasNacionales.forEach(compra => {
+        const totalAbonado = (compra.abonos || []).reduce((sum, abono) => sum + abono.valor, 0);
+        const saldoPendiente = compra.valorTotalCompra - totalAbonado;
+
+        let estadoPago = '';
+        if (saldoPendiente <= 0) {
+            estadoPago = `<span class="text-xs font-semibold bg-green-200 text-green-800 px-2 py-1 rounded-full">Pagado</span>`;
+        } else if (totalAbonado > 0) {
+            estadoPago = `<span class="text-xs font-semibold bg-yellow-200 text-yellow-800 px-2 py-1 rounded-full">Abono</span>`;
+        } else {
+            estadoPago = `<span class="text-xs font-semibold bg-red-200 text-red-800 px-2 py-1 rounded-full">Pendiente</span>`;
+        }
+
+        const card = document.createElement('div');
+        card.className = 'border p-4 rounded-lg';
+        card.innerHTML = `
+            <div class="flex flex-col sm:flex-row justify-between items-start">
+                <div>
+                    <p class="font-bold">${compra.proveedorNombre}</p>
+                    <p class="text-sm text-gray-600">Fecha: ${compra.fecha}</p>
+                    <p class="text-sm text-gray-500">Total: <span class="font-semibold">${formatCurrency(compra.valorTotalCompra)}</span></p>
+                </div>
+                <div class="flex items-center gap-2 mt-2 sm:mt-0">
+                    ${estadoPago}
+                    <button data-compra-json='${JSON.stringify(compra)}' class="edit-nacional-btn bg-gray-200 text-gray-700 px-3 py-1 rounded-lg text-sm font-semibold hover:bg-gray-300">
+                        Gestionar
+                    </button>
+                </div>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+
+    // Añadir listener para los nuevos botones de "Gestionar"
+    container.querySelectorAll('.edit-nacional-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const compraData = JSON.parse(e.currentTarget.dataset.compraJson);
+            showNacionalModal(compraData);
+        });
+    });
+}
+
+/**
+ * --- VERSIÓN MEJORADA CON BOTÓN DE EDITAR ---
+ * Renderiza la lista de ítems, mostrando ahora un botón para editar
+ * cada uno de ellos.
+ */
 function renderItems() {
     const itemsListEl = document.getElementById('items-list');
     if (!itemsListEl) return;
@@ -572,21 +791,33 @@ function renderItems() {
     }
 
     filtered.forEach(item => {
+        const averageCost = allItemAverageCosts[item.id] || 0;
+
         const itemDiv = document.createElement('div');
         itemDiv.className = 'border p-4 rounded-lg flex justify-between items-center';
+
+        // --- INICIO DE LA MODIFICACIÓN: Añadir botón de Editar ---
         itemDiv.innerHTML = `
-            <div>
+            <div class="flex-grow">
                 <p class="font-semibold"><span class="item-ref">${item.referencia}</span></p>
                 <p class="text-sm text-gray-700">${item.descripcion}</p>
+                <p class="text-sm text-blue-600 font-semibold mt-1">Costo Promedio: ${formatCurrency(averageCost)}</p>
             </div>
-            <div class="text-right">
-                <p class="font-bold text-lg">${item.stock}</p>
-                <p class="text-sm text-gray-500">en stock</p>
+            <div class="flex items-center gap-4">
+                <div class="text-right">
+                    <p class="font-bold text-lg">${item.stock}</p>
+                    <p class="text-sm text-gray-500">en stock</p>
+                </div>
+                <button data-item-json='${JSON.stringify(item)}' class="edit-item-btn bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-gray-300">
+                    Editar
+                </button>
             </div>
         `;
+        // --- FIN DE LA MODIFICACIÓN ---
         itemsListEl.appendChild(itemDiv);
     });
 }
+
 // --- FUNCIONES DE CARGA DE DATOS (ACTUALIZADAS) ---
 function loadClientes() {
     const q = query(collection(db, "clientes"), orderBy("nombre", "asc"));
@@ -1012,11 +1243,15 @@ function loadImportaciones() {
     return onSnapshot(q, (snapshot) => {
         allImportaciones = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         renderImportaciones();
+        calculateAllAverageCosts(); // <-- AÑADIDO: Llama al cálculo de costos.
     });
 }
 
+
 /**
- * Renderiza la lista de importaciones con cálculos financieros defensivos.
+ * --- VERSIÓN CORREGIDA SIN COMENTARIOS VISIBLES ---
+ * Renderiza la lista de importaciones en la vista principal.
+ * Se elimina un comentario de código que se mostraba incorrectamente en la interfaz.
  */
 function renderImportaciones() {
     const container = document.getElementById('importaciones-list');
@@ -1025,7 +1260,7 @@ function renderImportaciones() {
     container.innerHTML = '';
 
     if (allImportaciones.length === 0) {
-        container.innerHTML = '<p class.="text-center text-gray-500 py-4 col-span-full">No hay importaciones registradas.</p>';
+        container.innerHTML = '<p class="text-center text-gray-500 py-4 col-span-full">No hay importaciones registradas.</p>';
         return;
     }
 
@@ -1035,11 +1270,11 @@ function renderImportaciones() {
         .forEach(imp => {
             const status = getImportacionStatus(imp);
 
-            // --- CÁLCULOS FINANCIEROS REFORZADOS ---
             const trm = imp.trmLiquidacion || 4100;
-            const totalChinaCOP = Math.round((imp.totalChinaUSD || 0) * trm);
+            const totalChinaUSD = imp.totalChinaUSD || 0;
             const totalNacionalizacionCOP = Math.round(imp.totalNacionalizacionCOP || 0);
-            const granTotalCOP = totalChinaCOP + totalNacionalizacionCOP;
+            const totalAbonadoChinaUSD = (imp.abonos || []).reduce((sum, abono) => sum + (abono.valorUSD || 0), 0);
+            const saldoChinaCOP = Math.round((totalChinaUSD - totalAbonadoChinaUSD) * trm);
 
             let totalAbonadoNacionalizacion = 0;
             if (imp.gastosNacionalizacion) {
@@ -1049,13 +1284,17 @@ function renderImportaciones() {
                     });
                 });
             }
-            
-            const saldoChinaCOP = totalChinaCOP;
             const saldoNacionalizacionCOP = totalNacionalizacionCOP - Math.round(totalAbonadoNacionalizacion);
-            
+            const granTotalCOP = Math.round(totalChinaUSD * trm) + totalNacionalizacionCOP;
+
+            const operationDays = getOperationDays(imp.fechaPedido);
+            let fechasHTML = `<p class="text-xs text-gray-500">${operationDays}</p>`;
+            if (imp.fechaLlegadaPuerto) fechasHTML += `<p class="text-xs text-gray-500">Puerto: ${imp.fechaLlegadaPuerto}</p>`;
+            if (imp.fechaLlegadaBodega) fechasHTML += `<p class="text-xs text-gray-500">Bodega: ${imp.fechaLlegadaBodega}</p>`;
+
             const card = document.createElement('div');
             card.className = 'importacion-card bg-white p-4 rounded-lg shadow-sm border flex flex-col';
-            
+
             card.innerHTML = `
                 <div class="flex-grow">
                     <div class="flex justify-between items-start">
@@ -1064,6 +1303,7 @@ function renderImportaciones() {
                     </div>
                     <p class="text-sm text-gray-600 mt-1">${imp.naviera || 'Proveedor no especificado'}</p>
                     <p class="text-sm text-gray-500">BL: ${imp.numeroBl || 'N/A'}</p>
+                    <div class="mt-1">${fechasHTML}</div>
                 </div>
 
                 <div class="border-t mt-3 pt-3 space-y-1">
@@ -1150,386 +1390,843 @@ function renderGastosNacionalizacionSection(importacion) {
 }
 
 /**
- * Crea el elemento HTML para una única factura de nacionalización,
- * añadiendo un data-attribute para identificar su tipo.
+ * --- VERSIÓN SIMPLIFICADA Y CORREGIDA ---
+ * Crea el elemento para una factura de nacionalización. Vuelve al diseño de
+ * "Valor Total" simple, aplicable a todas las categorías incluyendo IVA y Arancel.
+ * @param {string} gastoTipo - El tipo de gasto.
+ * @param {object} [factura=null] - El objeto de la factura existente.
+ * @returns {HTMLElement} El elemento de la tarjeta de la factura.
  */
 function createGastoFacturaElement(gastoTipo, factura = null) {
     const isSaved = factura && factura.id;
     const facturaId = isSaved ? factura.id : `factura_${new Date().getTime()}`;
-    const facturaData = factura || { id: facturaId, numeroFactura: '', proveedorId: '', proveedorNombre: '', valorTotal: 0, abonos: [] };
+    const facturaData = factura || { id: facturaId, numeroFactura: '', proveedorId: '', proveedorNombre: '', valorTotal: 0, abonos: [], pdfUrl: null };
 
     const facturaCard = document.createElement('div');
     facturaCard.className = 'factura-card bg-white p-3 rounded-md border border-gray-300';
     facturaCard.dataset.facturaId = facturaData.id;
-    facturaCard.dataset.gastoTipo = gastoTipo; // <-- ATRIBUTO CLAVE AÑADIDO
+    facturaCard.dataset.gastoTipo = gastoTipo;
 
-    const totalAbonado = (facturaData.abonos || []).reduce((sum, abono) => sum + abono.valor, 0);
-    const saldoPendiente = facturaData.valorTotal - totalAbonado;
+    let cardContentHTML = '';
 
-    facturaCard.innerHTML = `
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <div class="md:col-span-2">
-                <div class="relative"><label class="text-xs font-semibold">Proveedor</label><input type="text" placeholder="Buscar proveedor..." class="proveedor-search-input w-full p-2 border rounded-lg text-sm" value="${facturaData.proveedorNombre || ''}" autocomplete="off" ${isSaved ? 'disabled' : ''}><input type="hidden" class="proveedor-id-hidden" value="${facturaData.proveedorId || ''}"><div class="search-results hidden"></div></div>
-                <div class="mt-2"><label class="text-xs font-semibold">N° Factura</label><input type="text" placeholder="N° Factura" class="factura-numero-input w-full p-2 border rounded-lg text-sm" value="${facturaData.numeroFactura || ''}" ${isSaved ? 'disabled' : ''}></div>
-            </div>
-            <div>
-                <label class="text-xs font-semibold">Valor Total Factura</label><input type="text" placeholder="Valor Total" class="factura-valor-total-input cost-input-cop w-full p-2 border rounded-lg text-sm font-bold" value="${formatCurrency(facturaData.valorTotal || 0)}" ${isSaved ? 'disabled' : ''}>
-                ${isSaved ? `<div class="mt-2 text-xs space-y-1"><div class="flex justify-between"><span>Abonado:</span> <span class="font-medium">${formatCurrency(totalAbonado)}</span></div><div class="flex justify-between text-red-600"><span>Saldo:</span> <span class="font-bold">${formatCurrency(saldoPendiente)}</span></div></div>` : ''}
-            </div>
-            <div class="bg-gray-50 p-2 rounded-lg ${isSaved ? '' : 'hidden'}">
-                <label class="text-xs font-semibold">Registrar Abono</label><div class="mt-2 space-y-2"><input type="text" placeholder="Valor Abono" class="abono-valor-input cost-input-cop w-full p-1 border rounded text-xs"><select class="abono-forma-pago-input w-full p-1 border rounded text-xs bg-white"><option>Efectivo</option><option>Nequi</option><option>Davivienda</option><option>Bancolombia</option><option>Consignación</option></select><button type="button" class="add-abono-gasto-btn w-full bg-green-500 text-white text-xs font-bold py-1 rounded hover:bg-green-600" data-gasto-tipo="${gastoTipo}" data-factura-id="${facturaData.id}">+ Abono</button></div>
-            </div>
-        </div>
-        ${!isSaved ? `<button type="button" class="save-factura-btn text-blue-600 hover:text-blue-800 font-bold text-xs mt-2" data-gasto-tipo="${gastoTipo}" data-factura-id="${facturaData.id}">Guardar Factura</button>` : ''}
-        <button type="button" class="remove-factura-btn text-red-500 hover:text-red-700 text-xs mt-2 ml-2">Eliminar Factura</button>
-    `;
+    if (isSaved) {
+        // --- DISEÑO PARA FACTURAS GUARDADAS ---
+        const totalAbonado = (facturaData.abonos || []).reduce((sum, abono) => sum + abono.valor, 0);
+        const saldoPendiente = facturaData.valorTotal - totalAbonado;
+        let pdfSectionHTML = '';
+        if (facturaData.pdfUrl) {
+            pdfSectionHTML = `<div class="mt-2"><a href="${facturaData.pdfUrl}" target="_blank" class="w-full inline-block text-center bg-blue-600 text-white font-semibold py-2 px-3 rounded-lg hover:bg-blue-700 text-sm">Ver PDF</a></div>`;
+        } else {
+            pdfSectionHTML = `<label for="update-pdf-${facturaId}" class="text-xs font-semibold">Adjuntar PDF</label><input type="file" id="update-pdf-${facturaId}" class="update-factura-pdf-input w-full text-sm mt-1" accept=".pdf"><button type="button" class="update-pdf-btn mt-1 w-full bg-orange-500 text-white text-xs font-bold py-1 rounded hover:bg-orange-600" data-factura-id="${facturaId}" data-gasto-tipo="${gastoTipo}">Guardar PDF</button>`;
+        }
+        cardContentHTML = `
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div class="md:col-span-1">
+                    <label class="text-xs font-semibold">Proveedor</label>
+                    <input type="text" class="proveedor-search-input w-full p-2 border rounded-lg text-sm bg-gray-100" value="${facturaData.proveedorNombre || ''}" disabled>
+                    <input type="hidden" class="proveedor-id-hidden" value="${facturaData.proveedorId || ''}">
+                    <label class="text-xs font-semibold mt-2 block">N° Factura</label>
+                    <input type="text" class="factura-numero-input w-full p-2 border rounded-lg text-sm bg-gray-100" value="${facturaData.numeroFactura || ''}" disabled>
+                </div>
+                <div class="md:col-span-1">
+                    <label class="text-xs font-semibold">Valor Total</label>
+                    <input type="text" class="factura-valor-total-input cost-input-cop w-full p-2 border rounded-lg text-sm font-bold bg-gray-100" value="${formatCurrency(facturaData.valorTotal || 0)}" disabled>
+                    <div class="mt-2">${pdfSectionHTML}</div>
+                </div>
+                <div class="md:col-span-1 text-xs space-y-1 bg-gray-50 p-2 rounded-lg h-full flex flex-col justify-center"><div class="flex justify-between"><span>Abonado:</span> <span class="font-medium">${formatCurrency(totalAbonado)}</span></div><div class="flex justify-between text-red-600"><span>Saldo:</span> <span class="font-bold">${formatCurrency(saldoPendiente)}</span></div></div>
+                <div class="bg-gray-50 p-2 rounded-lg"><label class="text-xs font-semibold">Registrar Abono</label><div class="mt-2 space-y-2"><input type="text" placeholder="Valor Abono" class="abono-valor-input cost-input-cop w-full p-1 border rounded text-xs"><select class="abono-forma-pago-input w-full p-1 border rounded text-xs bg-white"><option>Efectivo</option><option>Nequi</option><option>Davivienda</option><option>Bancolombia</option><option>Consignación</option></select><button type="button" class="add-abono-gasto-btn w-full bg-green-500 text-white text-xs font-bold py-1 rounded hover:bg-green-600" data-gasto-tipo="${gastoTipo}" data-factura-id="${facturaData.id}">+ Abono</button></div></div>
+            </div>`;
+    } else {
+        // --- DISEÑO PARA FACTURAS NUEVAS ---
+        cardContentHTML = `
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="space-y-3">
+                     <div class="relative"><label class="text-xs font-semibold">Proveedor</label><input type="text" placeholder="Buscar..." class="proveedor-search-input w-full p-2 border rounded-lg text-sm" autocomplete="off"><input type="hidden" class="proveedor-id-hidden"><div class="search-results hidden"></div></div>
+                    <div><label class="text-xs font-semibold">N° Factura</label><input type="text" placeholder="N° Factura" class="factura-numero-input w-full p-2 border rounded-lg text-sm"></div>
+                </div>
+                <div class="space-y-3">
+                    <div><label class="text-xs font-semibold">Valor Total Factura</label><input type="text" placeholder="Valor Total" class="factura-valor-total-input cost-input-cop w-full p-2 border rounded-lg text-sm font-bold"></div>
+                    <div><label class="text-xs font-semibold">Factura (PDF)</label><input type="file" class="factura-pdf-input w-full text-sm mt-1" accept=".pdf"></div>
+                </div>
+            </div>`;
+    }
+
+    facturaCard.innerHTML = cardContentHTML + `<div class="mt-3 flex gap-4">${!isSaved ? `<button type="button" class="save-factura-btn text-blue-600 hover:text-blue-800 font-bold text-xs" data-gasto-tipo="${gastoTipo}">Guardar Factura</button>` : ''}<button type="button" class="remove-factura-btn text-red-500 hover:text-red-700 text-xs">Eliminar Factura</button></div>`;
 
     if (!isSaved) {
-        const proveedorSearchInput = facturaCard.querySelector('.proveedor-search-input');
-        const proveedorResultsContainer = facturaCard.querySelector('.search-results');
-        initSearchableInput(proveedorSearchInput, proveedorResultsContainer, () => allProveedores, (p) => p.nombre, (sel) => {
-            const idInput = facturaCard.querySelector('.proveedor-id-hidden');
-            idInput.value = sel ? sel.id : '';
+        initSearchableInput(facturaCard.querySelector('.proveedor-search-input'), facturaCard.querySelector('.search-results'), () => allProveedores, (p) => p.nombre, (sel) => {
+            facturaCard.querySelector('.proveedor-id-hidden').value = sel ? sel.id : '';
         });
     }
     return facturaCard;
 }
 
-/**
- * Lee la información de los archivos de documentos seleccionados en el formulario.
- */
-function leerDocumentosDelForm() {
-    const documentosData = {};
-    const form = document.getElementById('importacion-form');
-    if (!form) return documentosData;
-    form.querySelectorAll('.documento-file-input').forEach(input => {
-        const docTipo = input.dataset.docTipo;
-        if (input.files && input.files.length > 0) {
-            const file = input.files[0];
-            documentosData[docTipo] = { fileObject: file, name: file.name };
-        } else {
-            const importacionId = document.getElementById('importacion-id').value;
-            const importacionActual = allImportaciones.find(i => i.id === importacionId);
-            const existingDoc = importacionActual?.documentos?.[docTipo];
-            if (existingDoc) documentosData[docTipo] = existingDoc;
-        }
-    });
-    return documentosData;
-}
 
 /**
- * Lee la estructura completa de los gastos de nacionalización desde el formulario
- * usando un selector global y data-attributes para ser más robusto.
+ * --- NUEVA FUNCIÓN ---
+ * Calcula el costo promedio ponderado para cada ítem basándose en todas las
+ * importaciones registradas.
  */
-function leerGastosNacionalizacionDelForm() {
-    const gastosData = {};
-    const form = document.getElementById('importacion-form');
-    if (!form) return gastosData;
+function calculateAllAverageCosts() {
+    const costData = {}; // Objeto temporal para acumular costos y cantidades
 
-    // Busca TODAS las tarjetas de factura dentro del formulario
-    form.querySelectorAll('.factura-card').forEach(facturaCard => {
-        const gastoTipo = facturaCard.dataset.gastoTipo;
-        const facturaId = facturaCard.dataset.facturaId;
-        const valorTotal = unformatCurrency(facturaCard.querySelector('.factura-valor-total-input').value);
-
-        if (!gastoTipo) {
-            console.warn("Se encontró una factura sin tipo de gasto. Será ignorada.", facturaCard);
-            return;
-        }
-
-        if (valorTotal >= 0) { // Incluimos facturas con valor 0 para no borrarlas si se editan
-            const importacionId = document.getElementById('importacion-id').value;
-            const importacionActual = allImportaciones.find(i => i.id === importacionId);
-            const facturaActual = importacionActual?.gastosNacionalizacion?.[gastoTipo]?.facturas.find(f => f.id === facturaId);
-
-            if (!gastosData[gastoTipo]) {
-                gastosData[gastoTipo] = { facturas: [] };
-            }
-
-            gastosData[gastoTipo].facturas.push({
-                id: facturaId,
-                proveedorId: facturaCard.querySelector('.proveedor-id-hidden').value,
-                proveedorNombre: facturaCard.querySelector('.proveedor-search-input').value,
-                numeroFactura: facturaCard.querySelector('.factura-numero-input').value,
-                valorTotal: valorTotal,
-                abonos: facturaActual?.abonos || []
+    // 1. Recorrer todas las importaciones para recolectar datos
+    allImportaciones.forEach(imp => {
+        const trm = imp.trmLiquidacion || 4100; // Usar TRM de la importación
+        if (imp.items && Array.isArray(imp.items)) {
+            imp.items.forEach(item => {
+                if (item.itemId && item.cantidad > 0 && item.valorTotalItemUSD > 0) {
+                    if (!costData[item.itemId]) {
+                        costData[item.itemId] = { totalCostCOP: 0, totalQuantity: 0 };
+                    }
+                    const costInCOP = item.valorTotalItemUSD * trm;
+                    costData[item.itemId].totalCostCOP += costInCOP;
+                    costData[item.itemId].totalQuantity += item.cantidad;
+                }
             });
         }
     });
-    
-    console.log("Gastos de Nacionalización leídos del form:", gastosData);
-    return gastosData;
+
+    // 2. Calcular el promedio para cada ítem y guardarlo en la variable global
+    allItemAverageCosts = {}; // Limpiar los costos antiguos
+    for (const itemId in costData) {
+        const data = costData[itemId];
+        if (data.totalQuantity > 0) {
+            allItemAverageCosts[itemId] = data.totalCostCOP / data.totalQuantity;
+        }
+    }
+
+    // 3. Volver a renderizar la lista de ítems para mostrar los nuevos costos
+    renderItems();
 }
 
+
 /**
- * Calcula todos los totales de la importación y actualiza la UI.
+ * --- VERSIÓN CON LÓGICA DE COSTEO AVANZADA ---
+ * Calcula los totales y prepara los datos para el costeo final, separando
+ * los gastos por volumen y los gastos por valor.
  */
 function calcularTotalesImportacionCompleto() {
     const form = document.getElementById('importacion-form');
-    if (!form) return { totalChinaUSD: 0, totalNacionalizacionCOP: 0, granTotalCOP: 0, trm: 0 };
-    let totalItemsUSD = 0;
-    form.querySelectorAll('.import-item-row').forEach(row => {
-        totalItemsUSD += unformatCurrency(row.querySelector('.item-valor-total')?.value || '0', true);
+    if (!form) return;
+
+    const items = Array.from(form.querySelectorAll('.import-item-row')).map(row => {
+        const itemId = row.querySelector('.item-id-hidden')?.value;
+        const itemData = allItems.find(i => i.id === itemId);
+        return {
+            itemId: itemId,
+            descripcion: row.querySelector('.item-descripcion-hidden')?.value || row.querySelector('.item-search-input').value,
+            cantidad: parseInt(row.querySelector('.item-cantidad')?.value) || 0,
+            valorTotalItemUSD: unformatCurrency(row.querySelector('.item-valor-total')?.value || '0', true),
+            laminasPorCaja: itemData ? itemData.laminasPorCaja : 1
+        };
     });
+
+    // --- INICIO DE LA CORRECCIÓN ---
     const fleteUSD = unformatCurrency(form.querySelector('#importacion-flete')?.value || '0', true);
     const seguroUSD = unformatCurrency(form.querySelector('#importacion-seguro')?.value || '0', true);
-    const totalChinaUSD = totalItemsUSD + fleteUSD + seguroUSD;
-    let totalNacionalizacionCOP = 0;
-    form.querySelectorAll('.factura-valor-total-input').forEach(input => {
-        totalNacionalizacionCOP += unformatCurrency(input.value || '0');
+    // --- FIN DE LA CORRECCIÓN ---
+
+    let gastosPorVolumenCOP = 0;
+    let gastosPorValorCOP = 0;
+
+    form.querySelectorAll('.factura-card').forEach(card => {
+        const gastoTipo = card.dataset.gastoTipo;
+        // --- INICIO DE LA CORRECCIÓN ---
+        const valor = unformatCurrency(card.querySelector('.factura-valor-total-input')?.textContent || card.querySelector('.factura-valor-total-input')?.value || '0');
+        // --- FIN DE LA CORRECCIÓN ---
+
+        if (gastoTipo === 'iva' || gastoTipo === 'arancel') {
+            gastosPorValorCOP += valor;
+        } else {
+            gastosPorVolumenCOP += valor;
+        }
     });
-    const trmInput = document.getElementById('importacion-trm-hidden');
-    const trm = trmInput ? parseFloat(trmInput.value) : 4100;
+
+    const totalItemsUSD = items.reduce((sum, item) => sum + item.valorTotalItemUSD, 0);
+    const totalChinaUSD = totalItemsUSD + fleteUSD + seguroUSD;
+    const totalNacionalizacionCOP = gastosPorVolumenCOP + gastosPorValorCOP;
+    const trm = parseFloat(document.getElementById('importacion-trm-hidden')?.value) || 4100;
     const totalChinaCOP = totalChinaUSD * trm;
     const granTotalCOP = totalChinaCOP + totalNacionalizacionCOP;
+
     document.getElementById('total-china-usd-display').textContent = `USD ${formatCurrency(totalChinaUSD, true)}`;
     document.getElementById('total-nacionalizacion-cop-display').textContent = `${formatCurrency(totalNacionalizacionCOP)}`;
     document.getElementById('resumen-total-china-cop').textContent = formatCurrency(Math.round(totalChinaCOP));
     document.getElementById('resumen-total-nacionalizacion-cop').textContent = formatCurrency(totalNacionalizacionCOP);
     document.getElementById('resumen-gran-total-cop').textContent = formatCurrency(Math.round(granTotalCOP));
-    return { totalChinaUSD, totalNacionalizacionCOP, granTotalCOP, trm };
+
+    const totalItemsCOP = totalItemsUSD * trm;
+    const fleteSeguroCOP = (fleteUSD + seguroUSD) * trm;
+    renderCosteoFinal(items, totalItemsCOP, fleteSeguroCOP, gastosPorVolumenCOP, gastosPorValorCOP, trm);
 }
 
+
 /**
- * Maneja el registro de un abono para una factura de nacionalización.
+ * Maneja el registro de un abono para una factura de nacionalización,
+ * actualizando tanto Firestore como la caché local de datos (allImportaciones).
  */
 async function handleGastoNacionalizacionAbonoSubmit(importacionId, gastoTipo, facturaId) {
     const facturaCard = document.querySelector(`.factura-card[data-factura-id="${facturaId}"]`);
-    if (!facturaCard) return showModalMessage("Error: No se encontró la factura.", "error");
+    if (!facturaCard) {
+        showModalMessage("Error: No se encontró la tarjeta de la factura en la interfaz.", "error");
+        return;
+    }
+
     const valorInput = facturaCard.querySelector('.abono-valor-input');
     const formaPagoInput = facturaCard.querySelector('.abono-forma-pago-input');
     const valorAbono = unformatCurrency(valorInput.value);
-    if (isNaN(valorAbono) || valorAbono <= 0) return showModalMessage("El valor del abono debe ser un número mayor a cero.");
-    const importacionActual = allImportaciones.find(i => i.id === importacionId);
-    const facturaActual = importacionActual?.gastosNacionalizacion?.[gastoTipo]?.facturas.find(f => f.id === facturaId);
-    if (!facturaActual) return showModalMessage("Error: No se pudo verificar el saldo.", "error");
-    const totalAbonado = (facturaActual.abonos || []).reduce((sum, abono) => sum + abono.valor, 0);
-    const saldoPendiente = facturaActual.valorTotal - totalAbonado;
-    if (valorAbono > saldoPendiente + 1) return showModalMessage(`El abono (${formatCurrency(valorAbono)}) no puede superar el saldo pendiente (${formatCurrency(saldoPendiente)}).`);
+
+    if (isNaN(valorAbono) || valorAbono <= 0) {
+        showModalMessage("El valor del abono debe ser un número mayor a cero.");
+        return;
+    }
+
     showModalMessage("Registrando abono...", true);
-    const nuevoAbono = {
-        valor: valorAbono,
-        formaPago: formaPagoInput.value,
-        fecha: new Date().toISOString().split('T')[0],
-        registradoPor: currentUser.uid,
-        timestamp: new Date()
-    };
-    facturaActual.abonos.push(nuevoAbono);
-    const gastosNacionalizacionActualizados = leerGastosNacionalizacionDelForm();
+
     try {
         const importacionRef = doc(db, "importaciones", importacionId);
-        await updateDoc(importacionRef, { gastosNacionalizacion: gastosNacionalizacionActualizados });
-        valorInput.value = '';
-        showImportacionModal(importacionActual);
+
+        // --- INICIO DE LA CORRECCIÓN CLAVE ---
+        // Usamos una transacción para leer y escribir de forma segura
+        await runTransaction(db, async (transaction) => {
+            const importacionDoc = await transaction.get(importacionRef);
+            if (!importacionDoc.exists()) {
+                throw new Error("La importación no fue encontrada.");
+            }
+
+            const importacionActual = importacionDoc.data();
+            const gastosNacionalizacion = importacionActual.gastosNacionalizacion || {};
+            const gastoActual = gastosNacionalizacion[gastoTipo];
+
+            if (!gastoActual || !gastoActual.facturas) {
+                throw new Error("No se encontró el tipo de gasto correspondiente.");
+            }
+
+            const facturaIndex = gastoActual.facturas.findIndex(f => f.id === facturaId);
+            if (facturaIndex === -1) {
+                throw new Error("No se pudo encontrar la factura para añadir el abono.");
+            }
+
+            const facturaActual = gastoActual.facturas[facturaIndex];
+            const totalAbonado = (facturaActual.abonos || []).reduce((sum, abono) => sum + abono.valor, 0);
+            const saldoPendiente = facturaActual.valorTotal - totalAbonado;
+
+            if (valorAbono > saldoPendiente + 1) { // Margen de 1 peso por redondeo
+                throw new Error(`El abono (${formatCurrency(valorAbono)}) no puede superar el saldo pendiente (${formatCurrency(saldoPendiente)}).`);
+            }
+
+            const nuevoAbono = {
+                valor: valorAbono,
+                formaPago: formaPagoInput.value,
+                fecha: new Date().toISOString().split('T')[0],
+                registradoPor: currentUser.uid,
+                timestamp: new Date()
+            };
+
+            if (!facturaActual.abonos) {
+                facturaActual.abonos = [];
+            }
+            facturaActual.abonos.push(nuevoAbono);
+
+            // Actualizamos la factura dentro de la estructura de gastos
+            gastosNacionalizacion[gastoTipo].facturas[facturaIndex] = facturaActual;
+
+            // Actualizamos el documento en Firestore dentro de la transacción
+            transaction.update(importacionRef, { gastosNacionalizacion });
+
+            // Actualizamos la copia local (allImportaciones) para reflejar el cambio al instante
+            const importacionIndexGlobal = allImportaciones.findIndex(i => i.id === importacionId);
+            if (importacionIndexGlobal !== -1) {
+                allImportaciones[importacionIndexGlobal].gastosNacionalizacion = gastosNacionalizacion;
+            }
+        });
+
+        // Si la transacción fue exitosa, refrescamos el modal con los datos ya actualizados
+        const importacionActualizada = allImportaciones.find(i => i.id === importacionId);
+        showImportacionModal(importacionActualizada);
         showTemporaryMessage("Abono registrado con éxito.", "success");
+        // --- FIN DE LA CORRECCIÓN CLAVE ---
+
     } catch (error) {
         console.error("Error al registrar abono:", error);
-        showModalMessage("Error al guardar el abono.");
+        // El hideModal() se quita para que el mensaje de error sea visible
+        showModalMessage(`Error: ${error.message}`);
     }
 }
 
+/**
+ * --- NUEVA FUNCIÓN ---
+ * Muestra el modal para registrar una nueva compra a un proveedor nacional.
+ * (Esta es la estructura inicial que construiremos más adelante).
+ */
+/**
+ * --- VERSIÓN COMPLETA PARA COMPRAS NACIONALES ---
+ * Muestra el modal para registrar o gestionar una nueva compra a un proveedor nacional.
+ * @param {object} [compra=null] - El objeto de la compra existente (opcional).
+ */
+async function showNacionalModal(compra = null) {
+    const isEditing = compra !== null;
+    const title = isEditing ? `Gestionar Compra Nacional` : "Registrar Compra Nacional";
+    const modalContentWrapper = document.getElementById('modal-content-wrapper');
+
+    // Lógica para la sección de abonos (solo visible en modo edición)
+    let abonosHTML = '';
+    if (isEditing) {
+        const totalAbonado = (compra.abonos || []).reduce((sum, abono) => sum + abono.valor, 0);
+        const saldoPendiente = (compra.valorTotalCompra || 0) - totalAbonado;
+        const historialAbonos = (compra.abonos || []).map(abono =>
+            `<li class="text-xs flex justify-between"><span>${abono.fecha}: ${abono.formaPago}</span> <span class="font-medium">${formatCurrency(abono.valor)}</span></li>`
+        ).join('');
+
+        abonosHTML = `
+            <div>
+                <h3 class="text-lg font-bold text-gray-800 mb-2">3. Gestión de Pagos</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="bg-gray-50 p-3 rounded-lg space-y-2">
+                        <div class="flex justify-between items-center text-sm"><span class="font-semibold">Valor Total:</span><span class="font-bold">${formatCurrency(compra.valorTotalCompra)}</span></div>
+                        <div class="flex justify-between items-center text-sm"><span class="font-semibold text-green-700">Total Abonado:</span><span class="font-bold text-green-700">${formatCurrency(totalAbonado)}</span></div>
+                        <div class="flex justify-between items-center text-sm border-t pt-1 mt-1"><span class="font-semibold text-red-700">Saldo Pendiente:</span><span class="font-bold text-red-700">${formatCurrency(saldoPendiente)}</span></div>
+                        <ul class="space-y-1 max-h-24 overflow-y-auto border-t pt-2 mt-2">${historialAbonos || '<li class="text-xs text-gray-400">Sin abonos.</li>'}</ul>
+                    </div>
+                    <div class="bg-gray-50 p-3 rounded-lg">
+                        <div class="space-y-2">
+                            <div><label class="text-xs font-semibold">Fecha Abono</label><input type="date" id="abono-nacional-fecha" class="w-full p-1 border rounded text-xs" value="${new Date().toISOString().slice(0, 10)}"></div>
+                            <div><label class="text-xs font-semibold">Valor Abono (COP)</label><input type="text" id="abono-nacional-valor" class="cost-input-cop w-full p-1 border rounded text-xs"></div>
+                            <div><label class="text-xs font-semibold">Forma de Pago</label><select id="abono-nacional-forma-pago" class="w-full p-1 border rounded text-xs bg-white"><option>Efectivo</option><option>Nequi</option><option>Davivienda</option><option>Bancolombia</option><option>Consignación</option></select></div>
+                        </div>
+                        <button type="button" id="add-abono-nacional-btn" class="mt-2 w-full bg-green-600 text-white text-xs font-bold py-2 rounded hover:bg-green-700">+ Registrar Abono</button>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    modalContentWrapper.innerHTML = `
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl mx-auto flex flex-col" style="max-height: 95vh;">
+            <div class="flex justify-between items-center p-4 border-b">
+                <h2 class="text-xl font-semibold">${title}</h2>
+                <button id="close-nacional-modal" class="text-gray-500 hover:text-gray-800 text-3xl">&times;</button>
+            </div>
+            <div class="p-6 overflow-y-auto flex-grow">
+                <form id="nacional-form" class="space-y-6">
+                    <input type="hidden" id="nacional-id" value="${isEditing ? compra.id : ''}">
+                    <div>
+                        <h3 class="text-lg font-bold text-gray-800 mb-2">1. Datos de la Compra</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="relative">
+                                <label class="block text-sm font-medium">Proveedor</label>
+                                <input type="text" id="nacional-proveedor-search" placeholder="Buscar proveedor..." class="w-full p-2 border rounded-lg mt-1" value="${compra?.proveedorNombre || ''}" ${isEditing ? 'disabled' : ''} required>
+                                <input type="hidden" id="nacional-proveedor-id" value="${compra?.proveedorId || ''}">
+                                <div id="nacional-proveedor-results" class="search-results hidden"></div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium">Fecha de Compra</label>
+                                <input type="date" id="nacional-fecha" class="w-full p-2 border rounded-lg mt-1" value="${compra?.fecha || new Date().toISOString().slice(0, 10)}" ${isEditing ? 'disabled' : ''} required>
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-gray-800 mb-2">2. Ítems de la Compra</h3>
+                        <div id="nacional-items-container" class="space-y-4"></div>
+                        ${!isEditing ? '<button type="button" id="add-nacional-item-btn" class="mt-4 w-full bg-gray-200 text-gray-700 font-semibold py-2 px-4 rounded-lg hover:bg-gray-300 text-sm">+ Añadir Ítem</button>' : ''}
+                        <div class="text-right mt-4 bg-gray-100 p-2 rounded-lg">
+                            <span class="font-bold text-lg">TOTAL COMPRA:</span>
+                            <span id="nacional-total-compra" class="font-bold text-xl ml-4">${isEditing ? formatCurrency(compra.valorTotalCompra) : '$ 0'}</span>
+                        </div>
+                    </div>
+                    ${abonosHTML}
+                </form>
+            </div>
+            <div class="p-4 border-t text-right bg-gray-50">
+                <button id="save-nacional-btn" class="bg-green-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-green-700">${isEditing ? 'Guardar Cambios' : 'Registrar Compra'}</button>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('modal').classList.remove('hidden');
+    document.getElementById('close-nacional-modal').addEventListener('click', hideModal);
+
+    // Asignar el listener al botón de guardar.
+    const saveBtn = document.getElementById('save-nacional-btn');
+    if (isEditing) {
+        // En modo edición, el botón de guardar principal no hace nada por ahora
+        saveBtn.disabled = true;
+        saveBtn.classList.add('opacity-50');
+    } else {
+        saveBtn.addEventListener('click', handleNacionalSubmit);
+    }
+
+    // Inicializar buscadores y listeners si estamos creando una nueva compra
+    if (!isEditing) {
+        initSearchableInput(
+            document.getElementById('nacional-proveedor-search'),
+            document.getElementById('nacional-proveedor-results'),
+            () => allProveedores, (p) => p.nombre, (sel) => {
+                document.getElementById('nacional-proveedor-id').value = sel ? sel.id : '';
+            }
+        );
+
+        const itemsContainer = document.getElementById('nacional-items-container');
+        document.getElementById('add-nacional-item-btn').addEventListener('click', () => {
+            itemsContainer.appendChild(createNacionalItemElement());
+        });
+
+        // Añadir una fila inicial
+        itemsContainer.appendChild(createNacionalItemElement());
+    } else {
+        // Si estamos editando, renderizamos los ítems existentes
+        const itemsContainer = document.getElementById('nacional-items-container');
+        compra.items.forEach(item => {
+            itemsContainer.appendChild(createNacionalItemElement(item, true)); // 'true' para modo edición
+        });
+
+        // Añadir listener para el botón de abonos
+        document.getElementById('add-abono-nacional-btn')?.addEventListener('click', () => handleAbonoNacionalSubmit(compra.id));
+    }
+}
+
+/**
+ * --- NUEVA FUNCIÓN ---
+ * Calcula y muestra el total de la compra nacional en el formulario.
+ */
+function calcularTotalCompraNacional() {
+    let total = 0;
+    document.querySelectorAll('.nacional-item-row').forEach(row => {
+        total += unformatCurrency(row.querySelector('.item-valor-total').value || '0');
+    });
+    document.getElementById('nacional-total-compra').textContent = formatCurrency(total);
+}
+
+/**
+ * --- NUEVA FUNCIÓN ---
+ * Guarda el registro de una nueva compra nacional en la base de datos.
+ */
+async function handleNacionalSubmit(e) {
+    e.preventDefault();
+
+    const proveedorId = document.getElementById('nacional-proveedor-id').value;
+    if (!proveedorId) return showModalMessage("Debes seleccionar un proveedor válido.");
+
+    let items;
+    try {
+        items = Array.from(document.querySelectorAll('.nacional-item-row')).map(row => {
+            const itemId = row.querySelector('.item-id-hidden').value;
+            if (!itemId) {
+                // Lanza un error personalizado que será capturado por el bloque catch
+                throw new Error("Has añadido una fila de ítem vacía o inválida. Por favor, elimínala o selecciona un ítem.");
+            }
+            return {
+                itemId: itemId,
+                descripcion: allItems.find(i => i.id === itemId)?.descripcion || 'N/A',
+                cantidad: parseInt(row.querySelector('.item-cantidad').value) || 0,
+                valorTotal: unformatCurrency(row.querySelector('.item-valor-total').value || '0')
+            };
+        });
+    } catch (error) {
+        // Captura el error específico de la fila de ítem vacía
+        showModalMessage(error.message);
+        return;
+    }
+
+
+    if (items.length === 0) return showModalMessage("Debes añadir al menos un ítem a la compra.");
+
+    const valorTotalCompra = items.reduce((sum, item) => sum + item.valorTotal, 0);
+
+    const nuevaCompra = {
+        proveedorId: proveedorId,
+        proveedorNombre: document.getElementById('nacional-proveedor-search').value,
+        fecha: document.getElementById('nacional-fecha').value,
+        items: items,
+        valorTotalCompra: valorTotalCompra,
+        abonos: [],
+        estadoPago: 'Pendiente',
+        creadoEn: new Date()
+    };
+
+    showModalMessage("Registrando compra y actualizando stock...", true);
+    try {
+        // --- INICIO DE LA LÓGICA DE ACTUALIZACIÓN DE STOCK ---
+        const batch = writeBatch(db);
+
+        // 1. Añadir la nueva compra al batch
+        const compraDocRef = doc(collection(db, "comprasNacionales"));
+        batch.set(compraDocRef, nuevaCompra);
+
+        // 2. Actualizar el stock de cada ítem en el batch
+        items.forEach(itemComprado => {
+            const itemRef = doc(db, "items", itemComprado.itemId);
+            const itemActual = allItems.find(i => i.id === itemComprado.itemId);
+            if (itemActual) {
+                const nuevoStock = (itemActual.stock || 0) + itemComprado.cantidad;
+                batch.update(itemRef, { stock: nuevoStock });
+            }
+        });
+
+        // 3. Ejecutar todas las operaciones de escritura a la vez
+        await batch.commit();
+        // --- FIN DE LA LÓGICA DE ACTUALIZACIÓN DE STOCK ---
+
+        hideModal();
+        showTemporaryMessage("¡Compra registrada y stock actualizado!", "success");
+
+        // Se recarga el modal en modo edición para que se puedan añadir abonos
+        showNacionalModal({ id: compraDocRef.id, ...nuevaCompra });
+
+    } catch (error) {
+        console.error("Error al registrar compra nacional:", error);
+        showModalMessage("Error: " + error.message);
+    }
+}
+
+/**
+ * --- NUEVA FUNCIÓN ---
+ * Registra un abono a una compra nacional y crea el gasto correspondiente.
+ */
+async function handleAbonoNacionalSubmit(compraId) {
+    const valor = unformatCurrency(document.getElementById('abono-nacional-valor').value);
+    if (isNaN(valor) || valor <= 0) return showModalMessage("El valor del abono debe ser mayor a cero.");
+
+    const compraActual = allComprasNacionales.find(c => c.id === compraId);
+    if (!compraActual) return showModalMessage("Error: No se encontró la compra.");
+
+    const totalAbonado = (compraActual.abonos || []).reduce((sum, abono) => sum + abono.valor, 0);
+    const saldoPendiente = compraActual.valorTotalCompra - totalAbonado;
+    if (valor > saldoPendiente + 1) return showModalMessage(`El abono no puede superar el saldo pendiente de ${formatCurrency(saldoPendiente)}.`);
+
+    const nuevoAbono = {
+        fecha: document.getElementById('abono-nacional-fecha').value,
+        valor: valor,
+        formaPago: document.getElementById('abono-nacional-forma-pago').value,
+        registradoPor: currentUser.uid,
+        timestamp: new Date()
+    };
+
+    showModalMessage("Registrando abono y gasto...", true);
+    try {
+        const nuevoGasto = {
+            fecha: nuevoAbono.fecha,
+            proveedorId: compraActual.proveedorId,
+            proveedorNombre: `Abono Compra: ${compraActual.proveedorNombre}`,
+            numeroFactura: `Compra Nacional #${compraId.slice(0, 6)}`,
+            valorTotal: nuevoAbono.valor,
+            fuentePago: nuevoAbono.formaPago,
+            registradoPor: currentUser.uid,
+            timestamp: new Date(),
+            isNationalPurchase: true,
+            compraId: compraId
+        };
+
+        const compraRef = doc(db, "comprasNacionales", compraId);
+        const gastoRef = collection(db, "gastos");
+
+        const batch = writeBatch(db);
+        batch.update(compraRef, { abonos: arrayUnion(nuevoAbono) });
+        batch.set(doc(gastoRef), nuevoGasto);
+        await batch.commit();
+
+        hideModal();
+        showTemporaryMessage("Abono y gasto registrados.", "success");
+        const compraActualizada = { ...compraActual, abonos: [...compraActual.abonos, nuevoAbono] };
+        showNacionalModal(compraActualizada);
+    } catch (error) {
+        console.error("Error al registrar abono nacional:", error);
+        showModalMessage("Error al registrar el abono.");
+    }
+}
+
+/**
+ * --- VERSIÓN CON CAMPOS DE FECHA Y ESTADO RESTAURADOS ---
+ * Vuelve a añadir las secciones para gestionar las fechas de llegada y
+ * los botones para actualizar el estado logístico de la importación.
+ */
 async function showImportacionModal(importacion = null) {
     const isEditing = importacion !== null;
     const title = isEditing ? `Gestionar Importación N° ${importacion.numeroImportacion}` : "Crear Nueva Importación";
     const modalContentWrapper = document.getElementById('modal-content-wrapper');
 
-    // Inserta el HTML completo de la nueva interfaz del modal
+    // --- Lógica para construir las secciones dinámicas del HTML ---
+
+    let abonosChinaHTML = '';
+    if (isEditing) {
+        const totalChinaUSD = importacion.totalChinaUSD || 0;
+        const totalAbonadoChinaUSD = (importacion.abonos || []).reduce((sum, abono) => sum + (abono.valorUSD || 0), 0);
+        const saldoPendienteUSD = totalChinaUSD - totalAbonadoChinaUSD;
+
+        const historialAbonos = (importacion.abonos || []).sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).map(abono =>
+            `<li class="text-xs flex justify-between items-center">
+                <span>${abono.fecha}: ${formatCurrency(abono.valorCOP)} (${formatCurrency(abono.valorUSD, true)})</span>
+                <span class="font-medium text-gray-500">TRM: ${abono.trmAbono ? abono.trmAbono.toFixed(2) : 'N/A'}</span>
+            </li>`
+        ).join('');
+
+        abonosChinaHTML = `
+            <div class="md:col-span-3 mt-4 pt-4 border-t">
+                <h4 class="font-semibold mb-2 text-gray-800">Abonos a Costos de Origen</h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="bg-gray-50 p-3 rounded-lg space-y-2">
+                        <div class="flex justify-between items-center text-sm"><span class="font-semibold">Total China (USD):</span><span class="font-bold">${formatCurrency(totalChinaUSD, true)}</span></div>
+                        <div class="flex justify-between items-center text-sm"><span class="font-semibold text-green-700">Total Abonado (USD):</span><span class="font-bold text-green-700">${formatCurrency(totalAbonadoChinaUSD, true)}</span></div>
+                        <div class="flex justify-between items-center text-sm border-t pt-1 mt-1"><span class="font-semibold text-red-700">Saldo Pendiente (USD):</span><span class="font-bold text-red-700">${formatCurrency(saldoPendienteUSD, true)}</span></div>
+                        <ul class="space-y-1 max-h-24 overflow-y-auto border-t pt-2 mt-2">${historialAbonos || '<li class="text-xs text-gray-400">Sin abonos.</li>'}</ul>
+                    </div>
+                    <div class="bg-gray-50 p-3 rounded-lg">
+                        <div class="space-y-2">
+                            <div><label class="text-xs font-semibold">Fecha Abono</label><input type="date" id="abono-china-fecha" class="w-full p-1 border rounded text-xs" value="${new Date().toISOString().slice(0, 10)}"></div>
+                            <div><label class="text-xs font-semibold">Valor Abono (COP)</label><input type="text" id="abono-china-valor-cop" class="cost-input-cop w-full p-1 border rounded text-xs"></div>
+                            <div><label class="text-xs font-semibold">Valor Abono (USD)</label><input type="text" id="abono-china-valor-usd" class="cost-input-usd w-full p-1 border rounded text-xs"></div>
+                            <div><label class="text-xs font-semibold">Forma de Pago</label><select id="abono-china-forma-pago" class="w-full p-1 border rounded text-xs bg-white"><option>Efectivo</option><option>Nequi</option><option>Davivienda</option><option>Bancolombia</option><option>Consignación</option><option>Transferencia</option></select></div>
+                        </div>
+                        <button type="button" id="add-abono-china-btn" class="mt-2 w-full bg-green-600 text-white text-xs font-bold py-2 rounded hover:bg-green-700">+ Registrar Abono</button>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    let logisticaHTML = '';
+    if (isEditing) {
+        logisticaHTML = `
+            <div>
+                <h3 class="text-lg font-bold text-gray-800 mb-2">5. Estado Logístico</h3>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-gray-50 rounded-lg border">
+                    <div>
+                        <label class="block text-sm font-medium">Fecha Llegada a Puerto</label>
+                        <input type="date" id="fecha-llegada-puerto" class="w-full p-2 border rounded-lg mt-1" value="${importacion.fechaLlegadaPuerto || ''}">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium">Fecha Llegada a Bodega</label>
+                        <input type="date" id="fecha-llegada-bodega" class="w-full p-2 border rounded-lg mt-1" value="${importacion.fechaLlegadaBodega || ''}">
+                    </div>
+                    <div class="flex flex-col justify-end space-y-2">
+                        ${importacion.estadoLogistico === 'Creada' ? `<button type="button" id="set-en-puerto-btn" class="w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700">Marcar "En Puerto"</button>` : ''}
+                        ${importacion.estadoLogistico !== 'En Bodega' ? `<button type="button" id="set-en-bodega-btn" class="w-full bg-green-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-700">Marcar "En Bodega"</button>` : ''}
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    // --- Construcción del HTML Principal ---
     modalContentWrapper.innerHTML = `
         <div class="bg-white rounded-lg shadow-xl w-full max-w-6xl mx-auto flex flex-col" style="max-height: 95vh;">
             <div class="flex justify-between items-center p-4 border-b sticky top-0 bg-white z-10">
                 <h2 class="text-xl font-semibold">${title}</h2>
                 <button id="close-importacion-modal" class="text-gray-500 hover:text-gray-800 text-3xl">&times;</button>
             </div>
-            <div class="p-6 overflow-y-auto flex-grow">
+            <div id="importacion-modal-body" class="p-6 overflow-y-auto flex-grow">
                 <form id="importacion-form" class="space-y-8">
                     <input type="hidden" id="importacion-id" value="${isEditing ? importacion.id : ''}">
-                    
-                    <div>
-                        <h3 class="text-lg font-bold text-gray-800 mb-2">1. Datos Generales</h3>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div><label class="block text-sm font-medium">Fecha de Pedido</label><input type="date" id="importacion-fecha-pedido" class="w-full p-2 border rounded-lg mt-1" value="${importacion?.fechaPedido || ''}"></div>
-                            <div><label class="block text-sm font-medium">Naviera / Proveedor</label><input type="text" id="importacion-naviera" class="w-full p-2 border rounded-lg mt-1" value="${importacion?.naviera || ''}"></div>
-                            <div><label class="block text-sm font-medium">Número de BL</label><input type="text" id="importacion-bl" class="w-full p-2 border rounded-lg mt-1" value="${importacion?.numeroBl || ''}"></div>
-                        </div>
-                    </div>
-
-                    <div>
-                        <h3 class="text-lg font-bold text-gray-800 mb-2">2. Costos Origen (China) - Valores en USD</h3>
-                        <div class="border-t pt-4">
-                            <h4 class="font-semibold mb-2">Ítems de la Importación</h4>
-                            <div id="importacion-items-container" class="space-y-4"></div>
-                            <button type="button" id="add-importacion-item-btn" class="mt-4 w-full bg-gray-200 text-gray-700 font-semibold py-2 px-4 rounded-lg hover:bg-gray-300 text-sm">+ Añadir Ítem</button>
-                        </div>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
-                            <div><label class="block text-sm font-medium">Flete Marítimo (USD)</label><input type="text" id="importacion-flete" class="cost-input-usd w-full p-2 border rounded-lg mt-1" value="${importacion?.fleteMaritimoUSD ? formatCurrency(importacion.fleteMaritimoUSD, true) : ''}"></div>
-                            <div><label class="block text-sm font-medium">Seguro (USD)</label><input type="text" id="importacion-seguro" class="cost-input-usd w-full p-2 border rounded-lg mt-1" value="${importacion?.seguroUSD ? formatCurrency(importacion.seguroUSD, true) : ''}"></div>
-                            <div class="p-2 bg-gray-100 rounded-lg">
-                                <label class="block text-sm font-bold text-gray-700">Total China (USD)</label>
-                                <p id="total-china-usd-display" class="text-xl font-bold text-gray-900">USD 0.00</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class=" ${isEditing ? '' : 'hidden'}">
-                        <h3 class="text-lg font-bold text-gray-800 mb-2">3. Documentos Soporte</h3>
-                        <div id="documentos-container" class="grid grid-cols-1 md:grid-cols-3 gap-4"></div>
-                    </div>
-
-                    <div class=" ${isEditing ? '' : 'hidden'}">
-                        <h3 class="text-lg font-bold text-gray-800 mb-2">4. Gastos de Nacionalización - Valores en COP</h3>
-                        <div id="gastos-nacionalizacion-container" class="space-y-4"></div>
-                        <div class="p-2 bg-gray-100 rounded-lg mt-4 text-right">
-                            <label class="block text-sm font-bold text-gray-700">Total Nacionalización (COP)</label>
-                            <p id="total-nacionalizacion-cop-display" class="text-xl font-bold text-gray-900">$ 0</p>
-                        </div>
-                    </div>
-
-                    <div class="p-4 bg-indigo-50 rounded-lg sticky bottom-0 border-t-4 border-indigo-200">
-                        <h3 class="text-lg font-bold text-indigo-900 mb-2">Resumen Financiero</h3>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
-                            <div><label class="block text-sm font-semibold">Total China (COP)</label><p id="resumen-total-china-cop" class="text-xl font-bold"></p></div>
-                            <div><label class="block text-sm font-semibold">Total Nacionalización</label><p id="resumen-total-nacionalizacion-cop" class="text-xl font-bold"></p></div>
-                            <div class="p-2 bg-white rounded"><label class="block text-sm font-bold text-indigo-800">GRAN TOTAL (COP)</label><p id="resumen-gran-total-cop" class="text-2xl font-extrabold text-indigo-900"></p></div>
-                        </div>
-                    </div>
+                    <input type="hidden" id="importacion-trm-hidden" value="${importacion?.trmLiquidacion || '4100'}">
+                    <div><h3 class="text-lg font-bold text-gray-800 mb-2">1. Datos Generales</h3><div class="grid grid-cols-1 md:grid-cols-3 gap-4"><div><label class="block text-sm font-medium">Fecha de Pedido</label><input type="date" id="importacion-fecha-pedido" class="w-full p-2 border rounded-lg mt-1" value="${importacion?.fechaPedido || new Date().toISOString().slice(0, 10)}"></div><div><label class="block text-sm font-medium">Naviera / Proveedor</label><input type="text" id="importacion-naviera" class="w-full p-2 border rounded-lg mt-1" value="${importacion?.naviera || ''}"></div><div><label class="block text-sm font-medium">Número de BL</label><input type="text" id="importacion-bl" class="w-full p-2 border rounded-lg mt-1" value="${importacion?.numeroBl || ''}"></div></div></div>
+                    <div><h3 class="text-lg font-bold text-gray-800 mb-2">2. Costos Origen (China) - Valores en USD</h3><div class="border-t pt-4"><h4 class="font-semibold mb-2">Ítems de la Importación</h4><div id="importacion-items-container" class="space-y-4"></div><button type="button" id="add-importacion-item-btn" class="mt-4 w-full bg-gray-200 text-gray-700 font-semibold py-2 px-4 rounded-lg hover:bg-gray-300 text-sm">+ Añadir Ítem</button></div><div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4"><div><label class="block text-sm font-medium">Flete Marítimo (USD)</label><input type="text" id="importacion-flete" class="cost-input-usd w-full p-2 border rounded-lg mt-1" value="${importacion?.fleteMaritimoUSD ? formatCurrency(importacion.fleteMaritimoUSD, true) : ''}"></div><div><label class="block text-sm font-medium">Seguro (USD)</label><input type="text" id="importacion-seguro" class="cost-input-usd w-full p-2 border rounded-lg mt-1" value="${importacion?.seguroUSD ? formatCurrency(importacion.seguroUSD, true) : ''}"></div><div class="p-2 bg-gray-100 rounded-lg"><label class="block text-sm font-bold text-gray-700">Total China (USD)</label><p id="total-china-usd-display" class="text-xl font-bold text-gray-900">USD 0.00</p></div>${abonosChinaHTML}</div></div>
+                    <div class="${isEditing ? '' : 'hidden'}"><h3 class="text-lg font-bold text-gray-800 mb-2">3. Documentos Soporte</h3><div id="documentos-container" class="grid grid-cols-1 md:grid-cols-3 gap-4"></div></div>
+                    <div class="${isEditing ? '' : 'hidden'}"><h3 class="text-lg font-bold text-gray-800 mb-2">4. Gastos de Nacionalización - Valores en COP</h3><div id="gastos-nacionalizacion-container" class="space-y-4"></div><div class="p-2 bg-gray-100 rounded-lg mt-4 text-right"><label class="block text-sm font-bold text-gray-700">Total Nacionalización (COP)</label><p id="total-nacionalizacion-cop-display" class="text-xl font-bold text-gray-900">$ 0</p></div></div>
+                    <div class="p-4 bg-indigo-50 rounded-lg border-t-4 border-indigo-200"><h3 class="text-lg font-bold text-indigo-900 mb-2">Resumen Financiero</h3><div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-center"><div><label class="block text-sm font-semibold">Total China (COP)</label><p id="resumen-total-china-cop" class="text-xl font-bold">$ 0</p></div><div><label class="block text-sm font-semibold">Total Nacionalización</label><p id="resumen-total-nacionalizacion-cop" class="text-xl font-bold">$ 0</p></div><div class="p-2 bg-white rounded"><label class="block text-sm font-bold text-indigo-800">GRAN TOTAL (COP)</label><p id="resumen-gran-total-cop" class="text-2xl font-extrabold text-indigo-900">$ 0</p></div></div></div>
+                    ${logisticaHTML}
+                    <div class="p-4 bg-gray-100 rounded-lg border-t-4 border-gray-300"><h3 class="text-lg font-bold text-gray-900 mb-2">Costeo Final por Ítem (COP)</h3><div id="costeo-final-container" class="space-y-2"></div></div>
                 </form>
             </div>
             <div class="p-4 border-t text-right sticky bottom-0 bg-white z-10"><button id="save-importacion-btn" class="bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-indigo-700">${isEditing ? 'Guardar Cambios' : 'Crear Importación'}</button></div>
         </div>
     `;
+
+    // --- Lógica de Inicialización (después de crear el HTML) ---
     document.getElementById('modal').classList.remove('hidden');
+    document.getElementById('close-importacion-modal').addEventListener('click', hideModal);
+    document.getElementById('save-importacion-btn').addEventListener('click', handleImportacionSubmit);
 
-    const modalContent = document.getElementById('modal-content-wrapper');
+    const modalBody = document.getElementById('importacion-modal-body');
+    setupModalEventListeners(modalBody, importacion);
+
     const itemsContainer = document.getElementById('importacion-items-container');
-
-    // Función auxiliar para inicializar el buscador en una fila de ítem
-    const initializeItemRowSearch = (itemRow) => {
-        const searchInput = itemRow.querySelector('.item-search-input');
-        const resultsContainer = itemRow.querySelector('.search-results');
-        initSearchableInput(
-            searchInput,
-            resultsContainer,
-            () => allItems,
-            (item) => `${item.referencia} - ${item.descripcion}`,
-            (selectedItem) => {
-                const idInput = itemRow.querySelector('.item-id-hidden');
-                const refInput = itemRow.querySelector('.item-referencia-hidden');
-                const descInput = itemRow.querySelector('.item-descripcion-hidden');
-                if (selectedItem) {
-                    idInput.value = selectedItem.id;
-                    refInput.value = selectedItem.referencia;
-                    descInput.value = selectedItem.descripcion;
-                } else {
-                    idInput.value = '';
-                    refInput.value = '';
-                    descInput.value = '';
-                }
-            }
-        );
-    };
-
-    // Lógica para poblar el contenido dinámico del modal
     if (isEditing) {
         renderDocumentosSection(importacion);
         renderGastosNacionalizacionSection(importacion);
-    }
-
-    if (isEditing && importacion.items && importacion.items.length > 0) {
-        importacion.items.forEach(item => {
-            const itemRow = createImportacionItemElement();
-            itemRow.querySelector('.item-search-input').value = item.descripcion;
-            itemRow.querySelector('.item-id-hidden').value = item.itemId;
-            itemRow.querySelector('.item-referencia-hidden').value = item.referencia;
-            itemRow.querySelector('.item-descripcion-hidden').value = item.descripcion;
-            itemRow.querySelector('.item-cantidad').value = item.cantidad;
-            itemRow.querySelector('.item-valor-total').value = formatCurrency(item.valorTotalItemUSD, true);
-            itemsContainer.appendChild(itemRow);
-            initializeItemRowSearch(itemRow);
-        });
+        if (importacion.items && importacion.items.length > 0) {
+            importacion.items.forEach(item => {
+                const itemRow = createImportacionItemElement(item);
+                itemsContainer.appendChild(itemRow);
+                initializeItemRowSearch(itemRow);
+            });
+        }
     } else {
         const initialRow = createImportacionItemElement();
         itemsContainer.appendChild(initialRow);
         initializeItemRowSearch(initialRow);
     }
-    // MANEJADOR DE EVENTOS CENTRALIZADO
-    modalContent.onclick = function (event) {
-        if (event.target.id === 'close-importacion-modal') hideModal();
-        if (event.target.id === 'save-importacion-btn') handleImportacionSubmit();
-        if (event.target.id === 'add-importacion-item-btn') {
+
+    getLiveTRM().then(trm => {
+        const trmInput = document.getElementById('importacion-trm-hidden');
+        if (trmInput) trmInput.value = trm;
+        calcularTotalesImportacionCompleto();
+    });
+    calcularTotalesImportacionCompleto();
+}
+
+/**
+ * --- VERSIÓN CON CONFIRMACIÓN DE BORRADO ---
+ * Centraliza todos los event listeners del modal de importación.
+ * AÑADIDO: Un diálogo de confirmación antes de eliminar una factura.
+ * @param {HTMLElement} modalBody - El cuerpo del modal.
+ * @param {object|null} importacion - El objeto de la importación si se está editando.
+ */
+function setupModalEventListeners(modalBody, importacion) {
+    const importacionId = importacion ? importacion.id : null;
+
+    modalBody.addEventListener('click', (event) => {
+        const target = event.target;
+
+        if (target.closest('#set-en-puerto-btn')) {
+            handleEstadoUpdate(importacionId, 'En Puerto');
+        }
+        else if (target.closest('#set-en-bodega-btn')) {
+            handleEstadoUpdate(importacionId, 'En Bodega');
+        }
+        else if (target.closest('#add-abono-china-btn')) { // Listener de abonos de China
+            handleAbonoChinaSubmit(importacionId);
+        }
+
+        if (target.id === 'add-importacion-item-btn') {
             const newRow = createImportacionItemElement();
-            itemsContainer.appendChild(newRow);
+            document.getElementById('importacion-items-container').appendChild(newRow);
             initializeItemRowSearch(newRow);
         }
-        if (event.target.closest('.remove-import-item-btn')) {
-            event.target.closest('.import-item-row').remove();
+        else if (target.closest('.remove-import-item-btn')) {
+            target.closest('.import-item-row').remove();
             calcularTotalesImportacionCompleto();
         }
-
-        const addFacturaBtn = event.target.closest('.add-factura-btn');
-        if (addFacturaBtn) {
-            const gastoTipo = addFacturaBtn.dataset.gastoTipo;
-            const facturasContainer = document.getElementById(`facturas-container-${gastoTipo}`);
-            facturasContainer.appendChild(createGastoFacturaElement(gastoTipo));
+        else if (target.closest('.add-factura-btn')) {
+            const gastoTipo = target.closest('.add-factura-btn').dataset.gastoTipo;
+            document.getElementById(`facturas-container-${gastoTipo}`).appendChild(createGastoFacturaElement(gastoTipo));
         }
-
-        const removeFacturaBtn = event.target.closest('.remove-factura-btn');
-        if (removeFacturaBtn) {
-            removeFacturaBtn.closest('.factura-card').remove();
-            calcularTotalesImportacionCompleto();
+        else if (target.closest('.remove-factura-btn')) {
+            if (confirm('¿Estás seguro de que quieres eliminar esta factura?')) {
+                target.closest('.factura-card').remove();
+                calcularTotalesImportacionCompleto();
+            }
         }
-
-        const saveFacturaBtn = event.target.closest('.save-factura-btn');
-        if (saveFacturaBtn) {
-            const importacionId = document.getElementById('importacion-id').value;
-            const gastoTipo = saveFacturaBtn.dataset.gastoTipo;
-            // Pasamos el elemento de la tarjeta directamente a la función
-            const facturaCard = saveFacturaBtn.closest('.factura-card');
-            handleSaveFacturaGasto(importacionId, gastoTipo, facturaCard);
+        else if (target.closest('.save-factura-btn')) {
+            const facturaCard = target.closest('.factura-card');
+            if (importacionId) {
+                handleSaveFacturaGasto(importacionId, facturaCard.dataset.gastoTipo, facturaCard);
+            } else {
+                showModalMessage("Primero debes crear la importación para poder guardar facturas.");
+            }
         }
-
-        const addAbonoGastoBtn = event.target.closest('.add-abono-gasto-btn');
-        if (addAbonoGastoBtn) {
-            const gastoTipo = addAbonoGastoBtn.dataset.gastoTipo;
-            const facturaId = addAbonoGastoBtn.dataset.facturaId;
-            handleGastoNacionalizacionAbonoSubmit(importacion.id, gastoTipo, facturaId);
+        else if (target.closest('.add-abono-gasto-btn')) {
+            const btn = target.closest('.add-abono-gasto-btn');
+            handleGastoNacionalizacionAbonoSubmit(importacionId, btn.dataset.gastoTipo, btn.dataset.facturaId);
         }
-    };
+        else if (target.closest('.update-pdf-btn')) {
+            const btn = target.closest('.update-pdf-btn');
+            handleUpdateFacturaPdf(importacionId, btn.dataset.gastoTipo, btn.dataset.facturaId);
+        }
+        else if (target.closest('#add-abono-china-btn')) {
+            handleAbonoChinaSubmit(importacionId);
+        }
+    });
 
-    // Listeners para formato de moneda y recálculo
-    modalContent.addEventListener('focusin', (e) => {
-        if (e.target.classList.contains('cost-input-usd') || e.target.classList.contains('cost-input-cop')) {
+
+    modalBody.addEventListener('focusin', (e) => {
+        // Añadido '#abono-china-valor-cop' al selector
+        if (e.target.classList.contains('cost-input-usd') || e.target.classList.contains('cost-input-cop') || e.target.id === 'abono-china-valor-cop') {
             unformatCurrencyInput(e.target);
         }
     });
-    modalContent.addEventListener('focusout', (e) => {
-        if (e.target.classList.contains('cost-input-usd') || e.target.classList.contains('cost-input-cop')) {
-            formatCurrencyInput(e.target);
-            calcularTotalesImportacionCompleto();
+
+    modalBody.addEventListener('focusout', (e) => {
+        if (e.target.id === 'fecha-llegada-puerto' || e.target.id === 'fecha-llegada-bodega') {
+            handleDateUpdate(importacionId, e.target.id, e.target.value);
         }
-    });
-    modalContent.addEventListener('input', (e) => {
-        if (e.target.classList.contains('item-cantidad')) {
-            calcularTotalesImportacionCompleto();
+
+        if (e.target.classList.contains('cost-input-usd') || e.target.classList.contains('cost-input-cop') || e.target.id === 'abono-china-valor-cop') {
+            formatCurrencyInput(e.target);
+            if (e.target.id !== 'abono-china-valor-cop') {
+                calcularTotalesImportacionCompleto();
+            }
         }
     });
 
-    const saveFacturaBtn = event.target.closest('.save-factura-btn');
-    if (saveFacturaBtn) {
-        const importacionId = document.getElementById('importacion-id').value;
-        const gastoTipo = saveFacturaBtn.dataset.gastoTipo;
-        const facturaId = saveFacturaBtn.dataset.facturaId;
-        handleSaveFacturaGasto(importacionId, gastoTipo, facturaId);
+    modalBody.addEventListener('input', (e) => {
+        if (e.target.classList.contains('item-cantidad') || e.target.classList.contains('item-valor-total')) {
+            calcularTotalesImportacionCompleto();
+        }
+    });
+}
+
+// js/app.js
+
+/**
+ * --- VERSIÓN MEJORADA CON VALIDACIÓN Y CÁLCULO DE TRM ---
+ * Maneja el registro de un abono a Costos de Origen.
+ * Valida que el abono no exceda el saldo pendiente.
+ * Calcula y guarda la TRM de la transacción.
+ * @param {string} importacionId - El ID de la importación que se está editando.
+ */
+async function handleAbonoChinaSubmit(importacionId) {
+    const valorCopInput = document.getElementById('abono-china-valor-cop');
+    const valorUsdInput = document.getElementById('abono-china-valor-usd');
+    const valorCOP = unformatCurrency(valorCopInput.value);
+    const valorUSD = unformatCurrency(valorUsdInput.value, true);
+
+    if (isNaN(valorCOP) || valorCOP <= 0 || isNaN(valorUSD) || valorUSD <= 0) {
+        showModalMessage("Los valores en COP y USD deben ser mayores a cero.");
+        return;
     }
 
-    // Cargar TRM y calcular totales iniciales
-    const trmInput = document.createElement('input');
-    trmInput.id = 'importacion-trm-hidden';
-    trmInput.type = 'hidden';
-    modalContent.appendChild(trmInput);
-    getLiveTRM().then(trm => {
-        trmInput.value = trm;
-        calcularTotalesImportacionCompleto();
-    });
+    // 1. Validar el límite del abono
+    const importacionActual = allImportaciones.find(i => i.id === importacionId);
+    if (!importacionActual) {
+        showModalMessage("Error: No se pudo encontrar la importación actual.");
+        return;
+    }
+    const totalChinaUSD = importacionActual.totalChinaUSD || 0;
+    const totalAbonadoUSD = (importacionActual.abonos || []).reduce((sum, abono) => sum + (abono.valorUSD || 0), 0);
+    const saldoPendienteUSD = totalChinaUSD - totalAbonadoUSD;
+
+    if (valorUSD > saldoPendienteUSD + 0.01) { // Se añade un margen de 1 centavo por redondeos
+        showModalMessage(`El abono (USD ${valorUSD.toFixed(2)}) no puede superar el saldo pendiente de ${formatCurrency(saldoPendienteUSD, true)}.`);
+        return;
+    }
+
+    // 2. Si la validación es exitosa, proceder a guardar
+    const formaPago = document.getElementById('abono-china-forma-pago').value;
+    const fechaAbono = document.getElementById('abono-china-fecha').value;
+
+    const nuevoAbono = {
+        fecha: fechaAbono,
+        valorCOP: valorCOP,
+        valorUSD: valorUSD,
+        trmAbono: valorCOP / valorUSD, // 3. Cálculo de la TRM
+        formaPago: formaPago,
+        timestamp: new Date(),
+        registradoPor: currentUser.uid
+    };
+
+    showModalMessage("Registrando abono...", true);
+
+    try {
+        const importacionRef = doc(db, "importaciones", importacionId);
+        await updateDoc(importacionRef, {
+            abonos: arrayUnion(nuevoAbono)
+        });
+
+        // Actualizar la caché local para reflejo inmediato
+        const importacionIndex = allImportaciones.findIndex(i => i.id === importacionId);
+        if (importacionIndex !== -1) {
+            if (!allImportaciones[importacionIndex].abonos) {
+                allImportaciones[importacionIndex].abonos = [];
+            }
+            allImportaciones[importacionIndex].abonos.push(nuevoAbono);
+        }
+
+        hideModal();
+        showTemporaryMessage("Abono registrado con éxito.", "success");
+        showImportacionModal(allImportaciones[importacionIndex]);
+
+    } catch (error) {
+        console.error("Error al registrar abono de China:", error);
+        showModalMessage("Error al guardar el abono.");
+    }
 }
 
 /**
@@ -1627,142 +2324,279 @@ async function handleMarcarEnBodega(importacionId) {
 }
 
 /**
+ * --- VERSIÓN FINAL Y COMPLETA ---
  * Maneja el guardado de la importación (creación o edición).
- * Recalcula todos los totales directamente desde el formulario antes de guardar
- * para asegurar la consistencia de los datos y actualiza la UI local al instante.
+ * Lee todos los datos del formulario antes de mostrar el modal de carga para evitar errores.
+ * No actualiza el stock de los ítems; esta acción se realiza al marcar la importación como "En Bodega".
  */
-async function handleImportacionSubmit() {
+async function handleImportacionSubmit(e) {
+    e.preventDefault();
     const form = document.getElementById('importacion-form');
     if (!form) {
         showModalMessage("Error crítico: El formulario de importación no se pudo encontrar.", "error");
         return;
     }
-    showModalMessage("Guardando importación...", true);
 
     try {
+        // --- PASO 1: Leer TODA la información del formulario y guardarla en variables locales ---
         const importacionIdInput = form.querySelector('#importacion-id');
         const isEditing = !!importacionIdInput.value;
         const importacionId = isEditing ? importacionIdInput.value : doc(collection(db, 'importaciones')).id;
-        const importacionRef = doc(db, "importaciones", importacionId);
 
-        const itemsContainer = form.querySelector('#importacion-items-container');
-        if (!itemsContainer || itemsContainer.children.length === 0) {
-            showModalMessage("Debes añadir al menos un ítem a la importación.");
-            hideModal();
-            return;
+        const trmHiddenElement = document.getElementById('importacion-trm-hidden');
+        if (!trmHiddenElement) {
+            throw new Error("No se pudo encontrar el campo TRM. Revisa la consola.");
         }
+        const trm = parseFloat(trmHiddenElement.value) || 4100;
 
-        const items = Array.from(itemsContainer.querySelectorAll('.import-item-row')).map(row => {
+        const itemsData = Array.from(form.querySelectorAll('.import-item-row')).map((row, index) => {
             const itemId = row.querySelector('.item-id-hidden').value;
-            const cantidad = parseInt(row.querySelector('.item-cantidad').value) || 1;
-            const valorTotalItemUSD = unformatCurrency(row.querySelector('.item-valor-total').value, true) || 0;
-            if (!itemId) throw new Error("Por favor, selecciona un ítem válido de la lista para cada fila.");
+            if (!itemId) {
+                throw new Error(`El ítem en la fila ${index + 1} no es válido. Por favor, selecciónalo de la lista.`);
+            }
             return {
-                itemId,
+                itemId: itemId,
                 referencia: row.querySelector('.item-referencia-hidden').value,
                 descripcion: row.querySelector('.item-descripcion-hidden').value,
-                cantidad,
-                valorTotalItemUSD,
-                valorUnitarioUSD: valorTotalItemUSD / cantidad,
+                cantidad: parseInt(row.querySelector('.item-cantidad').value) || 1,
+                valorTotalItemUSD: unformatCurrency(row.querySelector('.item-valor-total').value, true) || 0,
+                valorUnitarioUSD: (unformatCurrency(row.querySelector('.item-valor-total').value, true) || 0) / (parseInt(row.querySelector('.item-cantidad').value) || 1)
             };
         });
 
-        let numeroImportacion;
-        if (!isEditing) {
-            const counterRef = doc(db, "counters", "importacionCounter");
-            numeroImportacion = await runTransaction(db, async (t) => {
-                const counterDoc = await t.get(counterRef);
-                const newNumber = (counterDoc.exists() ? counterDoc.data().currentNumber : 0) + 1;
-                t.set(counterRef, { currentNumber: newNumber }, { merge: true });
-                return newNumber;
-            });
-        } else {
-            const docSnap = await getDoc(importacionRef);
-            numeroImportacion = docSnap.data().numeroImportacion;
+        if (itemsData.length === 0) {
+            throw new Error("Debes añadir al menos un ítem a la importación.");
         }
 
-        // --- CÁLCULOS FINALES DIRECTOS ANTES DE GUARDAR ---
+        const gastosNacionalizacionData = {};
+        form.querySelectorAll('.factura-card').forEach(facturaCard => {
+            const gastoTipo = facturaCard.dataset.gastoTipo;
+            const facturaId = facturaCard.dataset.facturaId;
+            if (!gastoTipo || !facturaId) return;
+            if (!gastosNacionalizacionData[gastoTipo]) gastosNacionalizacionData[gastoTipo] = { facturas: [] };
+
+            gastosNacionalizacionData[gastoTipo].facturas.push({
+                id: facturaId,
+                proveedorId: facturaCard.querySelector('.proveedor-id-hidden').value,
+                proveedorNombre: facturaCard.querySelector('.proveedor-search-input').value,
+                numeroFactura: facturaCard.querySelector('.factura-numero-input').value,
+                valorTotal: unformatCurrency(facturaCard.querySelector('.factura-valor-total-input')?.value || facturaCard.querySelector('.factura-valor-total-input')?.textContent || '0'),
+                abonos: [] // Los abonos se recuperarán de la BD dentro de la transacción
+            });
+        });
+
+        const fechaPedido = form.querySelector('#importacion-fecha-pedido').value;
+        const naviera = form.querySelector('#importacion-naviera').value;
+        const numeroBl = form.querySelector('#importacion-bl').value;
         const fleteUSD = unformatCurrency(form.querySelector('#importacion-flete')?.value || '0', true);
         const seguroUSD = unformatCurrency(form.querySelector('#importacion-seguro')?.value || '0', true);
-        const totalItemsUSD = items.reduce((sum, item) => sum + item.valorTotalItemUSD, 0);
-        const totalChinaUSD = totalItemsUSD + fleteUSD + seguroUSD;
-        
-        const trmInput = document.getElementById('importacion-trm-hidden');
-        const trm = trmInput ? parseFloat(trmInput.value) : 4100;
 
-        const gastosNacionalizacion = isEditing ? leerGastosNacionalizacionDelForm() : {};
-        let totalNacionalizacionCOP = 0;
-        if (gastosNacionalizacion) {
-            Object.values(gastosNacionalizacion).forEach(gasto => {
-                (gasto.facturas || []).forEach(factura => {
-                    totalNacionalizacionCOP += factura.valorTotal || 0;
-                });
-            });
-        }
-        
-        const granTotalCOP = (totalChinaUSD * trm) + totalNacionalizacionCOP;
+        // --- PASO 2: Mostrar el mensaje de carga ---
+        showModalMessage("Guardando importación...", true);
 
-        console.log("Valores calculados para guardar:", { totalChinaUSD, totalNacionalizacionCOP, granTotalCOP, trm });
+        // --- PASO 3: Ejecutar la transacción con las variables locales ---
+        const importacionRef = doc(db, "importaciones", importacionId);
+        await runTransaction(db, async (transaction) => {
+            const importacionExistente = isEditing ? (await transaction.get(importacionRef)).data() : null;
 
-        const data = {
-            numeroImportacion,
-            fechaPedido: form.querySelector('#importacion-fecha-pedido').value,
-            naviera: form.querySelector('#importacion-naviera').value,
-            numeroBl: form.querySelector('#importacion-bl').value,
-            fleteMaritimoUSD: fleteUSD,
-            seguroUSD: seguroUSD,
-            items,
-            totalChinaUSD,
-            totalNacionalizacionCOP,
-            granTotalCOP,
-            trmLiquidacion: trm,
-            documentos: isEditing ? leerDocumentosDelForm() : {},
-            gastosNacionalizacion,
-            estadoLogistico: isEditing ? (allImportaciones.find(i => i.id === importacionId)?.estadoLogistico || 'Creada') : 'Creada',
-            lastUpdated: new Date()
-        };
-
-        console.log("Objeto final a guardar en Firestore:", data);
-
-        const uploadPromises = [];
-        if (isEditing) {
-            const documentosParaSubir = data.documentos;
-            for (const docTipo in documentosParaSubir) {
-                const docInfo = documentosParaSubir[docTipo];
-                if (docInfo.fileObject) { // Solo subir si es un archivo nuevo
-                    const file = docInfo.fileObject;
-                    const storageRef = ref(storage, `importaciones/${importacionId}/documentos/${file.name}`);
-                    uploadPromises.push(
-                        uploadBytes(storageRef, file).then(snapshot => getDownloadURL(snapshot.ref))
-                        .then(url => {
-                            data.documentos[docTipo] = { name: file.name, url: url };
-                        })
-                    );
+            // Rehidratar los abonos de las facturas existentes para no perderlos
+            for (const gastoTipo in gastosNacionalizacionData) {
+                for (const factura of gastosNacionalizacionData[gastoTipo].facturas) {
+                    const facturaExistente = importacionExistente?.gastosNacionalizacion?.[gastoTipo]?.facturas.find(f => f.id === factura.id);
+                    if (facturaExistente) {
+                        factura.abonos = facturaExistente.abonos || [];
+                    }
                 }
             }
-        }
 
-        await Promise.all(uploadPromises);
-        await setDoc(importacionRef, data, { merge: true });
-
-        // Actualizar la copia local de los datos para reflejar los cambios al instante
-        if (isEditing) {
-            const importacionIndex = allImportaciones.findIndex(i => i.id === importacionId);
-            if (importacionIndex !== -1) {
-                allImportaciones[importacionIndex] = { ...allImportaciones[importacionIndex], ...data };
+            let numeroImportacion = importacionExistente?.numeroImportacion;
+            if (!isEditing) {
+                const counterRef = doc(db, "counters", "importacionCounter");
+                const counterDoc = await transaction.get(counterRef);
+                numeroImportacion = (counterDoc.exists() ? counterDoc.data().currentNumber : 0) + 1;
+                transaction.set(counterRef, { currentNumber: numeroImportacion }, { merge: true });
             }
-        } else {
-            allImportaciones.unshift({ id: importacionId, ...data });
-        }
-        renderImportaciones(); // Redibujar las tarjetas con los datos frescos
-        
+
+            const totalItemsUSD = itemsData.reduce((sum, item) => sum + item.valorTotalItemUSD, 0);
+            const totalChinaUSD = totalItemsUSD + fleteUSD + seguroUSD;
+            const totalNacionalizacionCOP = Object.values(gastosNacionalizacionData).reduce((sum, gasto) => sum + (gasto.facturas || []).reduce((subSum, f) => subSum + f.valorTotal, 0), 0);
+            const granTotalCOP = (totalChinaUSD * trm) + totalNacionalizacionCOP;
+
+            const dataFinal = {
+                numeroImportacion, fechaPedido, naviera, numeroBl,
+                fleteMaritimoUSD: fleteUSD, seguroUSD: seguroUSD,
+                items: itemsData,
+                totalChinaUSD, totalNacionalizacionCOP, granTotalCOP,
+                trmLiquidacion: trm,
+                gastosNacionalizacion: gastosNacionalizacionData,
+                documentos: isEditing ? leerDocumentosDelForm(importacionExistente) : {},
+                estadoLogistico: importacionExistente?.estadoLogistico || 'Creada',
+                abonos: importacionExistente?.abonos || [], // Preservar abonos de China
+                lastUpdated: new Date()
+            };
+
+            transaction.set(importacionRef, dataFinal, { merge: true });
+        });
+
         hideModal();
-        showModalMessage("¡Importación guardada con éxito!", false, 2000);
+        showTemporaryMessage("¡Importación guardada con éxito!", "success");
 
     } catch (error) {
         console.error("Error al guardar importación:", error);
         showModalMessage(`Error al guardar: ${error.message}`);
     }
+}
+
+// **Asegúrate de reemplazar también estas dos funciones auxiliares**
+
+function leerDocumentosDelForm(importacionActual) {
+    const documentosData = {};
+    const form = document.getElementById('importacion-form');
+    if (!form) return documentosData;
+    form.querySelectorAll('.documento-file-input').forEach(input => {
+        const docTipo = input.dataset.docTipo;
+        if (input.files && input.files.length > 0) {
+            const file = input.files[0];
+            documentosData[docTipo] = { fileObject: file, name: file.name };
+        } else {
+            const existingDoc = importacionActual?.documentos?.[docTipo];
+            if (existingDoc) documentosData[docTipo] = existingDoc;
+        }
+    });
+    return documentosData;
+}
+
+/**
+ * --- VERSIÓN FINAL Y DEFINITIVA: ALGORITMO DE OPTIMIZACIÓN "GUILLOTINE BSSF" ---
+ * Implementa una solución de nivel industrial para el problema de empaquetado 2D.
+ * - Utiliza la heurística "Best Short Side Fit" (BSSF) para encontrar el mejor hueco posible,
+ * priorizando el sobrante más grande y útil.
+ * - Siempre permite la rotación de piezas para una máxima eficiencia.
+ * - Gestiona los espacios libres mediante una técnica robusta que garantiza que no haya sobreposiciones.
+ * - El único objetivo es utilizar el mínimo número de láminas posible.
+ * @param {number} anchoLamina - El ancho de la lámina maestra.
+ * @param {number} altoLamina - El alto de la lámina maestra.
+ * @param {Array} cortes - Un array de objetos {ancho, alto, cantidad}.
+ * @returns {object} El objeto con el plano de corte más eficiente.
+ */
+function optimizarCortes(anchoLamina, altoLamina, cortes) {
+    let listaCortes = [];
+    let idCounter = 1;
+    cortes.forEach(c => {
+        for (let i = 0; i < c.cantidad; i++) {
+            listaCortes.push({
+                ...c,
+                id: idCounter++,
+                area: c.ancho * c.alto,
+                colocado: false,
+                anchoOriginal: c.ancho,
+                altoOriginal: c.alto
+            });
+        }
+    });
+
+    listaCortes.sort((a, b) => b.area - a.area);
+
+    let laminas = [];
+    let cortesPorColocar = [...listaCortes];
+
+    while (cortesPorColocar.length > 0) {
+        let laminaActual = {
+            numero: laminas.length + 1,
+            cortes: [],
+            espaciosLibres: [{ x: 0, y: 0, ancho: anchoLamina, alto: altoLamina }]
+        };
+
+        let sePudoColocarAlgoEnIteracion;
+        do {
+            sePudoColocarAlgoEnIteracion = false;
+            let mejorAjuste = null; // { corte, espacioIndex, rotado, puntuacion }
+            let corteAColocarIndex = -1;
+
+            for (let i = 0; i < cortesPorColocar.length; i++) {
+                const corte = cortesPorColocar[i];
+                for (let j = 0; j < laminaActual.espaciosLibres.length; j++) {
+                    const espacio = laminaActual.espaciosLibres[j];
+
+                    for (const rotado of [false, true]) {
+                        const anchoCorte = rotado ? corte.alto : corte.ancho;
+                        const altoCorte = rotado ? corte.ancho : corte.alto;
+
+                        if (anchoCorte <= espacio.ancho && altoCorte <= espacio.alto) {
+                            const puntuacion = Math.min(espacio.ancho - anchoCorte, espacio.alto - altoCorte);
+                            if (mejorAjuste === null || puntuacion < mejorAjuste.puntuacion) {
+                                mejorAjuste = { espacioIndex: j, rotado, puntuacion };
+                                corteAColocarIndex = i;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (mejorAjuste !== null) {
+                const corte = cortesPorColocar.splice(corteAColocarIndex, 1)[0];
+                const espacioElegido = laminaActual.espaciosLibres[mejorAjuste.espacioIndex];
+                const { rotado } = mejorAjuste;
+
+                const anchoCorte = rotado ? corte.alto : corte.ancho;
+                const altoCorte = rotado ? corte.ancho : corte.alto;
+
+                laminaActual.cortes.push({ ...corte, x: espacioElegido.x, y: espacioElegido.y, anchoFinal: anchoCorte, altoFinal: altoCorte, rotado });
+                sePudoColocarAlgoEnIteracion = true;
+                
+                // Dividir el espacio restante (Lógica de Guillotina) y podar la lista
+                const nuevosEspacios = [];
+                for(let i=0; i < laminaActual.espaciosLibres.length; i++){
+                    if(i !== mejorAjuste.espacioIndex) {
+                        nuevosEspacios.push(laminaActual.espaciosLibres[i]);
+                    }
+                }
+                laminaActual.espaciosLibres = nuevosEspacios;
+
+                if (espacioElegido.ancho - anchoCorte > 0) {
+                    laminaActual.espaciosLibres.push({ x: espacioElegido.x + anchoCorte, y: espacioElegido.y, ancho: espacioElegido.ancho - anchoCorte, alto: altoCorte });
+                }
+                if (espacioElegido.alto - altoCorte > 0) {
+                    laminaActual.espaciosLibres.push({ x: espacioElegido.x, y: espacioElegido.y + altoCorte, ancho: espacioElegido.ancho, alto: espacioElegido.alto - altoCorte });
+                }
+            }
+        } while (sePudoColocarAlgoEnIteracion);
+        
+        laminas.push(laminaActual);
+    }
+    
+    // Formateo final del plano
+    const planoFinal = laminas.map(lamina => ({
+        numero: lamina.numero,
+        cortes: lamina.cortes.map(c => ({
+            id: c.id,
+            ancho: c.anchoFinal,
+            alto: c.altoFinal,
+            x: c.x,
+            y: c.y,
+            descripcion: `${c.anchoOriginal}x${c.altoOriginal}${c.rotado ? ' (R)' : ''}`
+        }))
+    }));
+
+    return { numeroLaminas: laminas.length, plano: planoFinal };
+}
+
+/**
+ * --- VERSIÓN CON LÓGICA DE IVA INCLUIDO ---
+ * Calcula el costo por cortes y especifica que estos valores ya incluyen IVA.
+ * @param {number} totalCortes - El número total de cortes individuales a realizar.
+ * @returns {{costo: number, descripcion: string, ivaIncluido: boolean}}
+ */
+function calcularCostoDeCortes(totalCortes) {
+    if (totalCortes <= 3) {
+        return { costo: 0, descripcion: "Hasta 3 cortes sin costo", ivaIncluido: false };
+    }
+    if (totalCortes <= 10) {
+        // El valor de 15.000 ya incluye el IVA
+        return { costo: 15000, descripcion: `Cargo por ${totalCortes} cortes`, ivaIncluido: true };
+    }
+    // El valor de 20.000 ya incluye el IVA
+    return { costo: 20000, descripcion: `Cargo especial por ${totalCortes} cortes`, ivaIncluido: true };
 }
 
 // --- FUNCIONES DE MANEJO DE ACCIONES ---
@@ -1814,14 +2648,14 @@ async function handleItemSubmit(e) {
     const color = document.getElementById('nuevo-item-color').value;
     const ancho = parseFloat(document.getElementById('nuevo-item-ancho').value);
     const alto = parseFloat(document.getElementById('nuevo-item-alto').value);
+    const laminasPorCaja = parseInt(document.getElementById('nuevo-item-laminas-por-caja').value, 10); // <-- LEER NUEVO CAMPO
     const stock = parseInt(document.getElementById('nuevo-item-stock').value, 10);
 
-    if (!tipo || !color || isNaN(ancho) || isNaN(alto) || isNaN(stock)) {
+    if (!tipo || !color || isNaN(ancho) || isNaN(alto) || isNaN(stock) || isNaN(laminasPorCaja)) { // <-- AÑADIR VALIDACIÓN
         showModalMessage("Por favor, completa todos los campos con valores válidos.");
         return;
     }
 
-    // Creamos una referencia única basada en las propiedades
     const referencia = `${tipo.slice(0, 3).toUpperCase()}${color.slice(0, 3).toUpperCase()}-${ancho}x${alto}`;
 
     const nuevoItem = {
@@ -1830,7 +2664,8 @@ async function handleItemSubmit(e) {
         color: color,
         ancho: ancho,
         alto: alto,
-        descripcion: `${tipo} ${color} ${ancho}x${alto}mm`, // Descripción autogenerada
+        descripcion: `${tipo} ${color} ${ancho}x${alto}mm`,
+        laminasPorCaja: laminasPorCaja, // <-- GUARDAR NUEVO CAMPO
         stock: stock,
         creadoEn: new Date()
     };
@@ -1848,97 +2683,241 @@ async function handleItemSubmit(e) {
     }
 }
 
+/**
+ * --- VERSIÓN FINAL Y COMPLETA CON GUARDADO DE DESPIECE ---
+ * Se corrige el error final que impedía que el 'planoDespiece' se guardara
+ * correctamente en el documento de la remisión en Firestore.
+ */
 async function handleRemisionSubmit(e) {
     e.preventDefault();
     const clienteId = document.getElementById('cliente-id-hidden').value;
-    const clienteNombre = document.getElementById('cliente-search-input').value;
     const cliente = allClientes.find(c => c.id === clienteId);
-    const incluyeIVA = document.getElementById('incluir-iva').checked;
-
-    const itemsContainer = document.getElementById('items-container');
-    if (!currentUser || !clienteId || !cliente) {
+    if (!clienteId || !cliente) {
         showModalMessage("Debes seleccionar un cliente válido de la lista.");
         return;
     }
-    if (itemsContainer.children.length === 0) {
-        showModalMessage("Debes añadir al menos un ítem.");
-        return;
-    }
-    showModalMessage("Guardando remisión...", true);
-    const counterRef = doc(db, "counters", "remisionCounter");
+
+    showModalMessage("Guardando remisión y actualizando stock...", true);
+
     try {
-        const newRemisionNumber = await runTransaction(db, async (transaction) => {
-            const counterDoc = await transaction.get(counterRef);
+        const itemsParaGuardar = [];
+        const cargosAdicionales = [];
+        const stockUpdates = {};
+        const incluyeIVA = document.getElementById('incluir-iva').checked;
+
+        for (const itemRow of document.querySelectorAll('.item-row')) {
+            const itemId = itemRow.querySelector('.item-id-hidden').value;
+            const itemSeleccionado = allItems.find(i => i.id === itemId);
+            if (!itemSeleccionado) throw new Error("Has seleccionado un ítem inválido.");
+
+            const valorPorLaminaConIVA = unformatCurrency(itemRow.querySelector('.item-valor-lamina').value);
+            if (isNaN(valorPorLaminaConIVA) || valorPorLaminaConIVA <= 0) {
+                throw new Error(`Debes ingresar un valor válido para el ítem: ${itemSeleccionado.descripcion}.`);
+            }
+            
+            const valorPorLaminaBase = incluyeIVA ? valorPorLaminaConIVA / 1.19 : valorPorLaminaConIVA;
+            const tipoCorte = itemRow.querySelector('.tipo-corte-radio:checked').value;
+
+            if (tipoCorte === 'completa') {
+                const cantidad = parseInt(itemRow.querySelector('.item-cantidad-completa').value) || 0;
+                if (cantidad > 0) {
+                    itemsParaGuardar.push({ itemId, descripcion: itemSeleccionado.descripcion, tipo: 'Completa', cantidad, valorUnitario: valorPorLaminaBase, valorTotal: valorPorLaminaBase * cantidad });
+                    stockUpdates[itemId] = (stockUpdates[itemId] || 0) + cantidad;
+                }
+            } else {
+                const cortes = Array.from(itemRow.querySelectorAll('.cut-row')).map(row => ({
+                    ancho: parseInt(row.querySelector('.cut-ancho').value) || 0,
+                    alto: parseInt(row.querySelector('.cut-alto').value) || 0,
+                    cantidad: parseInt(row.querySelector('.cut-cantidad').value) || 1
+                })).filter(c => c.ancho > 0 && c.alto > 0);
+
+                if (cortes.length > 0) {
+                    const estrategiaSeleccionada = itemRow.querySelector('.estrategia-radio:checked').value;
+                    const resultadoDespiece = optimizarCortes(itemSeleccionado.ancho, itemSeleccionado.alto, cortes, estrategiaSeleccionada);
+                    const laminasNecesarias = resultadoDespiece.numeroLaminas;
+                    
+                    // --- INICIO DE LA CORRECCIÓN CLAVE ---
+                    // Se asegura que el 'planoDespiece' se incluya en el objeto a guardar.
+                    itemsParaGuardar.push({
+                        itemId,
+                        descripcion: itemSeleccionado.descripcion,
+                        tipo: 'Cortada',
+                        cantidad: laminasNecesarias,
+                        valorUnitario: valorPorLaminaBase,
+                        valorTotal: valorPorLaminaBase * laminasNecesarias,
+                        cortes,
+                        planoDespiece: resultadoDespiece.plano // Esta línea es la que se corrigió
+                    });
+                    // --- FIN DE LA CORRECCIÓN CLAVE ---
+
+                    stockUpdates[itemId] = (stockUpdates[itemId] || 0) + laminasNecesarias;
+                    
+                    resultadoDespiece.plano.forEach(lamina => {
+                        const cortesEnEstaLamina = lamina.cortes.length;
+                        const cargo = calcularCostoDeCortes(cortesEnEstaLamina);
+                        if (cargo.costo > 0) {
+                            const valorCargoBase = (incluyeIVA && cargo.ivaIncluido) ? cargo.costo / 1.19 : cargo.costo;
+                            cargosAdicionales.push({ descripcion: `${cargo.descripcion} (Lámina ${lamina.numero})`, valorUnitario: valorCargoBase, valorTotal: valorCargoBase });
+                        }
+                    });
+                }
+            }
+        }
+        
+        if (itemsParaGuardar.length === 0) throw new Error("No has añadido ítems válidos.");
+        
+        const subtotalItems = itemsParaGuardar.reduce((sum, item) => sum + item.valorTotal, 0);
+        const subtotalCargos = cargosAdicionales.reduce((sum, cargo) => sum + cargo.valorTotal, 0);
+        const subtotalGeneral = subtotalItems + subtotalCargos;
+        const valorIVA = incluyeIVA ? subtotalGeneral * 0.19 : 0;
+        const totalFinal = subtotalGeneral + valorIVA;
+
+        const counterRef = doc(db, "counters", "remisionCounter");
+        const newRemisionNumber = await runTransaction(db, async (t) => {
+            const counterDoc = await t.get(counterRef);
             const newNumber = (counterDoc.exists() ? counterDoc.data().currentNumber : 0) + 1;
-            transaction.set(counterRef, { currentNumber: newNumber }, { merge: true });
+            t.set(counterRef, { currentNumber: newNumber }, { merge: true });
             return newNumber;
         });
-
-        // Obtenemos los valores finales calculados correctamente.
-        const { subtotalGeneral, valorIVA, total } = calcularTotales();
-
-        const items = Array.from(itemsContainer.querySelectorAll('.item-row')).map(row => {
-            const itemId = row.querySelector('.item-id-hidden').value;
-            if (!itemId) {
-                throw new Error("Por favor, selecciona un ítem válido de la lista para cada fila.");
-            }
-            const valorIngresado = unformatCurrency(row.querySelector('.item-valor-unitario').value) || 0;
-            // Guardamos siempre el valor base (sin IVA) en la base de datos.
-            const valorUnitarioBase = incluyeIVA ? (valorIngresado / 1.19) : valorIngresado;
-
-            return {
-                itemId: itemId,
-                referencia: row.querySelector('.item-referencia-hidden').value,
-                descripcion: row.querySelector('.item-descripcion-hidden').value,
-                cantidad: parseFloat(row.querySelector('.item-cantidad').value) || 0,
-                valorUnitario: valorUnitarioBase, // Se guarda el valor SIN IVA
-            };
-        });
-
-        const formaDePago = document.getElementById('forma-pago').value;
-        const initialPayments = [];
-        if (formaDePago !== 'Pendiente') {
-            initialPayments.push({ amount: total, date: document.getElementById('fecha-recibido').value, method: formaDePago, registeredAt: new Date(), registeredBy: currentUser.uid, status: 'confirmado' });
-        }
 
         const nuevaRemision = {
             numeroRemision: newRemisionNumber,
             idCliente: clienteId,
-            clienteNombre: clienteNombre,
+            clienteNombre: cliente.nombre,
             clienteEmail: cliente.email,
             fechaRecibido: document.getElementById('fecha-recibido').value,
-            fechaEntrega: null,
-            formaPago: formaDePago,
-            incluyeIVA: incluyeIVA,
-            items: items,
-            subtotal: subtotalGeneral,
-            valorIVA: valorIVA,
-            valorTotal: total,
+            formaPago: document.getElementById('forma-pago').value,
+            incluyeIVA,
+            items: itemsParaGuardar,
+            cargosAdicionales,
+            subtotal: Math.round(subtotalGeneral),
+            valorIVA: Math.round(valorIVA),
+            valorTotal: Math.round(totalFinal),
             creadoPor: currentUser.uid,
             timestamp: new Date(),
-            pdfUrl: null,
-            emailStatus: 'pending',
             estado: 'Recibido',
-            facturado: false,
-            numeroFactura: null
         };
-        await addDoc(collection(db, "remisiones"), nuevaRemision);
+
+        const batch = writeBatch(db);
+        const remisionRef = doc(collection(db, "remisiones"));
+        batch.set(remisionRef, nuevaRemision);
+
+        for (const itemId in stockUpdates) {
+            const cantidadADescontar = stockUpdates[itemId];
+            const itemRef = doc(db, "items", itemId);
+            const itemActual = allItems.find(i => i.id === itemId);
+            if (itemActual) {
+                const nuevoStock = (itemActual.stock || 0) - cantidadADescontar;
+                batch.update(itemRef, { stock: nuevoStock });
+            }
+        }
+        
+        await batch.commit();
 
         e.target.reset();
-        document.getElementById('cliente-search-input').value = '';
-        document.getElementById('cliente-id-hidden').value = '';
-        itemsContainer.innerHTML = '';
-        itemsContainer.appendChild(createItemElement());
+        document.getElementById('items-container').innerHTML = '';
         calcularTotales();
+        hideModal();
+        showTemporaryMessage("¡Remisión guardada con éxito!", "success");
 
-        hideModal();
-        showModalMessage("¡Remisión guardada!", false, 2000);
-        document.getElementById('fecha-recibido').value = new Date().toISOString().split('T')[0];
     } catch (error) {
-        console.error("Error al crear la remisión: ", error);
-        hideModal();
-        showModalMessage("Error al generar la remisión: " + error.message);
+        console.error("Error al procesar la remisión:", error);
+        showModalMessage(`Error: ${error.message}`);
     }
+}
+
+/**
+ * --- FUNCIONES AUXILIARES FALTANTES ---
+ * Estas funciones manejan la lógica de los campos de búsqueda con autocompletado.
+ */
+
+/**
+ * Inicializa el comportamiento de búsqueda para una fila de ítem en el modal de importación.
+ * @param {HTMLElement} itemRow - El elemento de la fila del ítem.
+ */
+function initializeItemRowSearch(itemRow) {
+    const searchInput = itemRow.querySelector('.item-search-input');
+    const resultsContainer = itemRow.querySelector('.search-results');
+    initSearchableInput(
+        searchInput,
+        resultsContainer,
+        () => allItems, // Usa la lista global de ítems
+        (item) => `${item.referencia} - ${item.descripcion}`, // Cómo se muestra el ítem en la lista
+        (selectedItem) => {
+            // Qué hacer cuando se selecciona un ítem
+            const idInput = itemRow.querySelector('.item-id-hidden');
+            const refInput = itemRow.querySelector('.item-referencia-hidden');
+            const descInput = itemRow.querySelector('.item-descripcion-hidden');
+            if (selectedItem) {
+                idInput.value = selectedItem.id;
+                refInput.value = selectedItem.referencia;
+                descInput.value = selectedItem.descripcion;
+            } else {
+                idInput.value = '';
+                refInput.value = '';
+                descInput.value = '';
+            }
+        }
+    );
+};
+
+
+/**
+ * --- VERSIÓN FINAL Y ROBUSTA ---
+ * Se corrige un bug crítico de "closure" pasando el elemento 'searchInput'
+ * directamente a la función onSelect. Esto asegura que el callback siempre
+ * pueda encontrar su contexto y los elementos correctos para actualizar.
+ */
+function initSearchableInput(searchInput, resultsContainer, getDataFn, displayFn, onSelect) {
+    searchInput.addEventListener('input', () => {
+        const data = getDataFn();
+        const searchTerm = searchInput.value.toLowerCase();
+
+        if (!searchTerm) {
+            // Limpiar la selección solo si el campo está vacío.
+            if (onSelect) onSelect(null, searchInput);
+            resultsContainer.innerHTML = '';
+            resultsContainer.classList.add('hidden');
+            return;
+        }
+
+        const filteredData = data.filter(item => displayFn(item).toLowerCase().includes(searchTerm));
+        renderResults(filteredData);
+    });
+
+    searchInput.addEventListener('focus', () => {
+        if (searchInput.value) {
+            searchInput.dispatchEvent(new Event('input'));
+        }
+    });
+
+    function renderResults(results) {
+        resultsContainer.innerHTML = '';
+        if (results.length === 0) {
+            resultsContainer.classList.add('hidden');
+            return;
+        }
+        results.forEach(item => {
+            const div = document.createElement('div');
+            div.className = 'search-result-item';
+            div.textContent = displayFn(item);
+            div.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                searchInput.value = displayFn(item);
+                resultsContainer.classList.add('hidden');
+                // Al seleccionar, pasamos el ítem y el input
+                if (onSelect) onSelect(item, searchInput);
+            });
+            resultsContainer.appendChild(div);
+        });
+        resultsContainer.classList.remove('hidden');
+    }
+
+    document.addEventListener('click', (e) => {
+        if (!searchInput.contains(e.target) && !resultsContainer.contains(e.target)) {
+            resultsContainer.classList.add('hidden');
+        }
+    });
 }
 
 // --- FUNCIONES DE AYUDA Y MODALES ---
@@ -1994,52 +2973,53 @@ async function handleFileUpload(employeeId, docPath, file) {
     }
 }
 
-function initSearchableInput(searchInput, resultsContainer, getDataFn, displayFn, onSelect) {
-    searchInput.addEventListener('input', () => {
-        const data = getDataFn();
-        const searchTerm = searchInput.value.toLowerCase();
-        onSelect(null);
-        if (!searchTerm) {
-            resultsContainer.innerHTML = '';
-            resultsContainer.classList.add('hidden');
-            return;
-        }
-        const filteredData = data.filter(item => displayFn(item).toLowerCase().includes(searchTerm));
-        renderResults(filteredData);
-    });
 
-    searchInput.addEventListener('focus', () => {
-        if (searchInput.value) {
-            searchInput.dispatchEvent(new Event('input'));
-        }
-    });
 
-    function renderResults(results) {
-        resultsContainer.innerHTML = '';
-        if (results.length === 0) {
-            resultsContainer.classList.add('hidden');
-            return;
-        }
-        results.forEach(item => {
-            const div = document.createElement('div');
-            div.className = 'search-result-item';
-            div.textContent = displayFn(item);
-            div.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                searchInput.value = displayFn(item);
-                resultsContainer.classList.add('hidden');
-                if (onSelect) onSelect(item);
-            });
-            resultsContainer.appendChild(div);
-        });
-        resultsContainer.classList.remove('hidden');
+/**
+ * --- NUEVA FUNCIÓN ---
+ * Maneja el guardado de los cambios de un ítem.
+ * Regenera la referencia y descripción basándose en los nuevos datos.
+ */
+async function handleEditItemSubmit(e) {
+    e.preventDefault();
+
+    const itemId = document.getElementById('edit-item-id').value;
+    const tipo = document.getElementById('edit-item-tipo').value;
+    const color = document.getElementById('edit-item-color').value;
+    const ancho = parseFloat(document.getElementById('edit-item-ancho').value);
+    const alto = parseFloat(document.getElementById('edit-item-alto').value);
+    const laminasPorCaja = parseInt(document.getElementById('edit-item-laminas-por-caja').value, 10);
+
+    if (!tipo || !color || isNaN(ancho) || isNaN(alto) || isNaN(laminasPorCaja)) {
+        showModalMessage("Por favor, completa todos los campos con valores válidos.");
+        return;
     }
 
-    document.addEventListener('click', (e) => {
-        if (!searchInput.contains(e.target) && !resultsContainer.contains(e.target)) {
-            resultsContainer.classList.add('hidden');
-        }
-    });
+    // Volver a generar la referencia y descripción por si cambian los datos
+    const referencia = `${tipo.slice(0, 3).toUpperCase()}${color.slice(0, 3).toUpperCase()}-${ancho}x${alto}`;
+    const descripcion = `${tipo} ${color} ${ancho}x${alto}mm`;
+
+    const updatedData = {
+        tipo,
+        color,
+        ancho,
+        alto,
+        laminasPorCaja,
+        referencia,
+        descripcion
+        // No incluimos el stock, ya que no se puede editar aquí.
+    };
+
+    showModalMessage("Actualizando ítem...", true);
+    try {
+        const itemRef = doc(db, "items", itemId);
+        await updateDoc(itemRef, updatedData);
+        hideModal();
+        showTemporaryMessage("¡Ítem actualizado con éxito!", "success");
+    } catch (error) {
+        console.error("Error al actualizar el ítem:", error);
+        showModalMessage("Error al guardar los cambios.");
+    }
 }
 
 // Esta función ahora se llama una sola vez
@@ -2069,29 +3049,92 @@ function setupSearchInputs() {
     );
 }
 
-function createImportacionItemElement() {
+/**
+ * --- NUEVA FUNCIÓN ---
+ * Crea el elemento HTML para una fila de ítem en el formulario de compra nacional.
+ * @param {object} [item=null] - El objeto del ítem si se está editando.
+ * @param {boolean} [isEditing=false] - Si la fila está en modo de solo lectura.
+ * @returns {HTMLElement} El elemento de la fila del ítem.
+ */
+function createNacionalItemElement(item = null, isEditing = false) {
+    const itemRow = document.createElement('div');
+    itemRow.className = 'nacional-item-row grid grid-cols-1 md:grid-cols-4 gap-2 border-t pt-3';
+
+    itemRow.innerHTML = `
+        <div class="relative md:col-span-2">
+            <label class="text-sm font-medium">Ítem</label>
+            <input type="text" placeholder="Buscar ítem..." class="item-search-input w-full p-2 border rounded-lg" value="${item?.descripcion || ''}" autocomplete="off" ${isEditing ? 'disabled' : ''} required>
+            <input type="hidden" class="item-id-hidden" value="${item?.itemId || ''}">
+            <div class="search-results hidden"></div>
+        </div>
+        <div>
+            <label class="text-sm font-medium">Cantidad</label>
+            <input type="number" class="item-cantidad p-2 border rounded-lg w-full" placeholder="Cant." value="${item?.cantidad || ''}" min="1" ${isEditing ? 'disabled' : ''} required>
+        </div>
+        <div class="flex items-end gap-2">
+            <div class="flex-grow">
+                <label class="text-sm font-medium">Valor Total (COP)</label>
+                <input type="text" class="item-valor-total cost-input-cop p-2 border rounded-lg w-full" value="${item ? formatCurrency(item.valorTotal) : ''}" placeholder="Valor Total" ${isEditing ? 'disabled' : ''} required>
+            </div>
+            ${!isEditing ? '<button type="button" class="remove-nacional-item-btn bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 p-2 h-10 w-10 flex-shrink-0">X</button>' : ''}
+        </div>
+    `;
+
+    if (!isEditing) {
+        // Inicializar buscador solo en modo creación
+        initSearchableInput(
+            itemRow.querySelector('.item-search-input'),
+            itemRow.querySelector('.search-results'),
+            () => allItems, (i) => `${i.referencia} - ${i.descripcion}`, (sel) => {
+                itemRow.querySelector('.item-id-hidden').value = sel ? sel.id : '';
+            }
+        );
+        // Listener para recalcular total
+        itemRow.querySelector('.item-valor-total').addEventListener('input', calcularTotalCompraNacional);
+        itemRow.querySelector('.remove-nacional-item-btn').addEventListener('click', () => {
+            itemRow.remove();
+            calcularTotalCompraNacional();
+        });
+    }
+
+    return itemRow;
+}
+
+/**
+ * --- VERSIÓN SIMPLIFICADA ---
+ * Crea el elemento para una fila de ítem, sin mostrar el costo unitario.
+ * @param {object} [item=null] - El objeto del ítem existente (opcional).
+ * @returns {HTMLElement} El elemento de la fila del ítem.
+ */
+function createImportacionItemElement(item = null) {
     dynamicElementCounter++;
     const itemRow = document.createElement('div');
     itemRow.className = 'import-item-row grid grid-cols-1 md:grid-cols-5 gap-2 border-t pt-3 mt-3';
     itemRow.dataset.id = dynamicElementCounter;
 
+    const descripcion = item ? item.descripcion : '';
+    const itemId = item ? item.itemId : '';
+    const referencia = item ? item.referencia : '';
+    const cantidad = item ? item.cantidad : '1';
+    const valorTotalUSD = item ? formatCurrency(item.valorTotalItemUSD, true) : '';
+
     itemRow.innerHTML = `
         <div class="relative md:col-span-2">
             <label class="text-sm font-medium text-gray-600">Ítem</label>
-            <input type="text" placeholder="Buscar ítem..." class="item-search-input w-full p-2 border border-gray-300 rounded-lg" autocomplete="off" required>
-            <input type="hidden" class="item-id-hidden">
-            <input type="hidden" class="item-referencia-hidden">
-            <input type="hidden" class="item-descripcion-hidden">
+            <input type="text" placeholder="Buscar ítem..." class="item-search-input w-full p-2 border border-gray-300 rounded-lg" value="${descripcion}" autocomplete="off" required>
+            <input type="hidden" class="item-id-hidden" value="${itemId}">
+            <input type="hidden" class="item-referencia-hidden" value="${referencia}">
+            <input type="hidden" class="item-descripcion-hidden" value="${descripcion}">
             <div class="search-results hidden"></div>
         </div>
         <div>
             <label class="text-sm font-medium text-gray-600">Cantidad</label>
-            <input type="number" class="item-cantidad p-2 border border-gray-300 rounded-lg w-full" placeholder="Cant." min="1" required>
+            <input type="number" class="item-cantidad p-2 border border-gray-300 rounded-lg w-full" placeholder="Cant." min="1" value="${cantidad}" required>
         </div>
         <div class="flex items-end gap-2 md:col-span-2">
             <div class="flex-grow">
                 <label class="text-sm font-medium text-gray-600">Valor Total del Ítem (USD)</label>
-                <input type="text" class="item-valor-total cost-input-usd p-2 border border-gray-300 rounded-lg w-full" placeholder="Valor Total" required>
+                <input type="text" class="item-valor-total cost-input-usd p-2 border border-gray-300 rounded-lg w-full" placeholder="Valor Total" value="${valorTotalUSD}" required>
             </div>
             <button type="button" class="remove-import-item-btn bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 p-2 h-10 w-10 flex-shrink-0 flex items-center justify-center">X</button>
         </div>
@@ -2102,83 +3145,144 @@ function createImportacionItemElement() {
 function createItemElement() {
     dynamicElementCounter++;
     const itemRow = document.createElement('div');
-    itemRow.className = 'item-row grid grid-cols-1 gap-2';
-    itemRow.dataset.id = dynamicElementCounter;
+    itemRow.className = 'item-row border border-gray-300 p-3 rounded-lg';
+    itemRow.id = `item-row-${dynamicElementCounter}`;
 
     itemRow.innerHTML = `
         <div class="relative">
-            <input type="text" id="item-search-${dynamicElementCounter}" placeholder="Buscar ítem por referencia o descripción..." class="item-search-input w-full p-2 border border-gray-300 rounded-lg" autocomplete="off" required>
+            <input type="text" placeholder="Buscar ítem..." class="item-search-input w-full p-2 border border-gray-300 rounded-lg" autocomplete="off" required>
             <input type="hidden" class="item-id-hidden" name="itemId">
-            <input type="hidden" class="item-referencia-hidden" name="itemReferencia">
-            <input type="hidden" class="item-descripcion-hidden" name="itemDescripcion">
-            <div id="item-search-results-${dynamicElementCounter}" class="search-results hidden"></div>
+            <input type="hidden" class="item-laminas-por-caja-hidden">
+            <input type="hidden" class="item-ancho-hidden">
+            <input type="hidden" class="item-alto-hidden">
+            <div class="search-results hidden"></div>
         </div>
-        <div class="grid grid-cols-3 gap-2">
-            <input type="number" class="item-cantidad p-2 border border-gray-300 rounded-lg" placeholder="Cant." min="1" required>
-            <input type="text" inputmode="numeric" class="item-valor-unitario p-2 border border-gray-300 rounded-lg" placeholder="Vlr. Unit." required>
-            <button type="button" class="remove-item-btn bg-red-500 text-white font-bold rounded-lg hover:bg-red-600">Eliminar</button>
+        <div class="mt-3 text-sm flex items-center space-x-4">
+            <label class="flex items-center"><input type="radio" name="tipo-corte-${dynamicElementCounter}" value="completa" class="tipo-corte-radio" checked> <span class="ml-2">Lámina Completa</span></label>
+            <label class="flex items-center"><input type="radio" name="tipo-corte-${dynamicElementCounter}" value="cortada" class="tipo-corte-radio"> <span class="ml-2">Lámina Cortada</span></label>
         </div>
+        <div class="grid grid-cols-2 gap-4 mt-2">
+            <div class="completa-container">
+                <label class="text-xs font-semibold">Cantidad de Láminas</label>
+                <input type="number" class="item-cantidad-completa w-full p-2 border rounded-lg" placeholder="Cant." min="1">
+            </div>
+            <div>
+                <label class="text-xs font-semibold">Valor por Lámina (COP)</label>
+                <input type="text" class="item-valor-lamina cost-input-cop w-full p-2 border rounded-lg" placeholder="Valor Unit." required>
+            </div>
+        </div>
+        <div class="cortada-container mt-2 hidden">
+            <div class="bg-gray-100 p-2 rounded-md">
+                <label class="text-xs font-semibold block mb-1">Estrategia de Despiece:</label>
+                <div class="flex items-center space-x-3 text-xs">
+                    <label class="flex items-center"><input type="radio" name="estrategia-despiece-${dynamicElementCounter}" value="minimo_desperdicio" class="estrategia-radio" checked> <span class="ml-1">Mínimo Desperdicio</span></label>
+                    <label class="flex items-center"><input type="radio" name="estrategia-despiece-${dynamicElementCounter}" value="vertical" class="estrategia-radio"> <span class="ml-1">Prioridad Vertical</span></label>
+                </div>
+            </div>
+            <label class="text-xs font-semibold mt-2 block">Cortes (Ancho x Alto en mm)</label>
+            <div class="cortes-list space-y-2 mt-1"></div>
+            <button type="button" class="add-cut-btn mt-2 w-full text-xs bg-blue-100 text-blue-800 font-semibold py-1 rounded hover:bg-blue-200">+ Añadir Corte</button>
+        </div>
+        <button type="button" class="remove-item-btn bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 w-full mt-3 py-1 text-sm">Eliminar Ítem</button>
     `;
 
-    // Configurar el buscador para este nuevo ítem
-    const searchInput = itemRow.querySelector(`#item-search-${dynamicElementCounter}`);
-    const resultsContainer = itemRow.querySelector(`#item-search-results-${dynamicElementCounter}`);
     initSearchableInput(
-        searchInput,
-        resultsContainer,
-        () => allItems.filter(i => i.stock > 0), // Solo mostrar items con stock
+        itemRow.querySelector('.item-search-input'),
+        itemRow.querySelector('.search-results'),
+        () => allItems.filter(i => i.stock > 0),
         (item) => `${item.referencia} - ${item.descripcion} (Stock: ${item.stock})`,
-        (selectedItem) => {
-            const idInput = itemRow.querySelector('.item-id-hidden');
-            const refInput = itemRow.querySelector('.item-referencia-hidden');
-            const descInput = itemRow.querySelector('.item-descripcion-hidden');
+        (selectedItem, searchInputElement) => {
+            const row = searchInputElement.closest('.item-row');
+            if (!row) return; // Salida de seguridad
+
+            const idInput = row.querySelector('.item-id-hidden');
+            const laminasInput = row.querySelector('.item-laminas-por-caja-hidden');
+            const anchoInput = row.querySelector('.item-ancho-hidden');
+            const altoInput = row.querySelector('.item-alto-hidden');
+
             if (selectedItem) {
                 idInput.value = selectedItem.id;
-                refInput.value = selectedItem.referencia;
-                descInput.value = selectedItem.descripcion;
+                laminasInput.value = selectedItem.laminasPorCaja;
+                anchoInput.value = selectedItem.ancho;
+                altoInput.value = selectedItem.alto;
             } else {
                 idInput.value = '';
-                refInput.value = '';
-                descInput.value = '';
+                laminasInput.value = '';
+                anchoInput.value = '';
+                altoInput.value = '';
             }
         }
     );
 
-    itemRow.querySelector('.remove-item-btn').addEventListener('click', () => { itemRow.remove(); calcularTotales(); });
-    itemRow.querySelectorAll('input.item-cantidad, input.item-valor-unitario').forEach(input => input.addEventListener('input', calcularTotales));
-
     return itemRow;
 }
 
+/**
+ * --- VERSIÓN MEJORADA CON CAMPO DE CANTIDAD ---
+ * Crea el elemento HTML para una única fila de corte.
+ * AHORA INCLUYE un campo para especificar la cantidad de cortes de esa medida.
+ * @returns {HTMLElement} El elemento de la fila de corte.
+ */
+function createCutElement() {
+    const cutRow = document.createElement('div');
+    cutRow.className = 'cut-row flex items-center gap-2';
+
+    // --- INICIO DE LA MODIFICACIÓN ---
+    cutRow.innerHTML = `
+        <input type="number" class="cut-ancho w-full p-1 border rounded-md" placeholder="Ancho">
+        <span class="text-gray-400">x</span>
+        <input type="number" class="cut-alto w-full p-1 border rounded-md" placeholder="Alto">
+        <input type="number" class="cut-cantidad w-20 p-1 border rounded-md" placeholder="Cant." min="1" value="1">
+        <button type="button" class="remove-cut-btn bg-red-100 text-red-700 font-bold rounded p-1 text-xs">X</button>
+    `;
+    // --- FIN DE LA MODIFICACIÓN ---
+
+    return cutRow;
+}
+
+/**
+ * --- VERSIÓN REMISIONES 2.0: CÁLCULO DE TOTALES ---
+ * Calcula los totales del formulario de remisión, considerando la nueva
+ * lógica de láminas completas, cortadas y los cargos por corte.
+ */
 function calcularTotales() {
-    const itemsContainer = document.getElementById('items-container');
     const ivaCheckbox = document.getElementById('incluir-iva');
     const subtotalEl = document.getElementById('subtotal');
     const valorIvaEl = document.getElementById('valor-iva');
     const valorTotalEl = document.getElementById('valor-total');
 
-    if (!itemsContainer || !ivaCheckbox || !subtotalEl || !valorIvaEl || !valorTotalEl) {
-        return { subtotalGeneral: 0, valorIVA: 0, total: 0 };
-    }
+    let subtotalItems = 0;
+    let subtotalCargos = 0;
 
-    let subtotalSinRedondear = 0;
-    const incluyeIVA = ivaCheckbox.checked;
+    document.querySelectorAll('.item-row').forEach(itemRow => {
+        const itemId = itemRow.querySelector('.item-id-hidden').value;
+        const costoPromedioItem = allItemAverageCosts[itemId] || 0;
+        const tipoCorte = itemRow.querySelector('.tipo-corte-radio:checked').value;
 
-    itemsContainer.querySelectorAll('.item-row').forEach(row => {
-        const cantidad = parseFloat(row.querySelector('.item-cantidad').value) || 0;
-        const valorIngresado = unformatCurrency(row.querySelector('.item-valor-unitario').value);
+        if (tipoCorte === 'completa') {
+            const cantidad = parseInt(itemRow.querySelector('.item-cantidad-completa').value) || 0;
+            subtotalItems += cantidad * costoPromedioItem;
+        } else { // 'cortada'
+            const cortes = Array.from(itemRow.querySelectorAll('.cut-row')).map(cutRow => ({
+                cantidad: parseInt(cutRow.querySelector('.cut-cantidad').value) || 1
+            }));
 
-        const valorUnitarioBase = incluyeIVA ? (valorIngresado / 1.19) : valorIngresado;
+            // Este es un cálculo SIMPLIFICADO para la UI. El cálculo real se hace al guardar.
+            // Aquí asumimos 1 lámina como base para no sobrecargar la interfaz.
+            subtotalItems += costoPromedioItem * 1; // Estimación simple
 
-        subtotalSinRedondear += cantidad * valorUnitarioBase;
+            const totalCortes = cortes.reduce((sum, c) => sum + c.cantidad, 0);
+            const cargoCorte = calcularCostoDeCortes(totalCortes);
+            if (cargoCorte.costo > 0) {
+                subtotalCargos += cargoCorte.costo;
+            }
+        }
     });
 
-    // --- INICIO DE LA CORRECCIÓN ---
-    // Redondeamos los valores al entero más cercano
-    const subtotalGeneral = Math.round(subtotalSinRedondear);
+    const subtotalGeneral = subtotalItems + subtotalCargos;
+    const incluyeIVA = ivaCheckbox.checked;
     const valorIVA = incluyeIVA ? Math.round(subtotalGeneral * 0.19) : 0;
     const total = subtotalGeneral + valorIVA;
-    // --- FIN DE LA CORRECCIÓN ---
 
     subtotalEl.textContent = formatCurrency(subtotalGeneral);
     valorIvaEl.textContent = formatCurrency(valorIVA);
@@ -2550,6 +3654,66 @@ function renderCartera() {
 
     carteraTotalEl.innerHTML = `Total Cartera: <span class="text-red-600">${formatCurrency(totalCartera)}</span>`;
 }
+
+/**
+ * --- VERSIÓN CON LÓGICA DE COSTEO CORREGIDA ---
+ * Calcula y renderiza el costeo final. Ahora distribuye correctamente TODOS los gastos
+ * adicionales (flete, seguro, nacionalización) de forma proporcional entre los ítems.
+ * @param {Array} items - La lista de ítems del formulario.
+ * @param {number} totalItemsCOP - El costo total de SOLO los ítems (sin flete/seguro) en COP.
+ * @param {number} totalGastosAdicionalesCOP - La suma de flete, seguro y nacionalización en COP.
+ * @param {number} trm - La TRM utilizada para los cálculos.
+ */
+function renderCosteoFinal(items, totalItemsCOP, fleteSeguroCOP, gastosVolumenCOP, gastosValorCOP, trm) {
+    const container = document.getElementById('costeo-final-container');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (!items || items.length === 0 || totalItemsCOP <= 0) {
+        container.innerHTML = '<p class="text-sm text-gray-500 text-center">Añade ítems y costos para ver el costeo final.</p>';
+        return;
+    }
+
+    // 1. Calcular el total de cajas de la importación
+    const totalCajas = items.reduce((sum, item) => {
+        return sum + (item.cantidad / (item.laminasPorCaja || 1));
+    }, 0);
+
+    items.forEach(item => {
+        if (item.cantidad <= 0) return;
+
+        // Costo del ítem en origen (puesto en COP)
+        const costoOrigenTotalItem = item.valorTotalItemUSD * trm;
+
+        // 2. Distribuir gastos por VOLUMEN (basado en cajas)
+        const cajasDelItem = item.cantidad / (item.laminasPorCaja || 1);
+        const participacionPorCajas = totalCajas > 0 ? cajasDelItem / totalCajas : 0;
+        const gastosVolumenAsignados = (fleteSeguroCOP + gastosVolumenCOP) * participacionPorCajas;
+
+        // 3. Distribuir gastos por VALOR (basado en costo)
+        const participacionPorValor = totalItemsCOP > 0 ? costoOrigenTotalItem / totalItemsCOP : 0;
+        const gastosValorAsignados = gastosValorCOP * participacionPorValor;
+
+        // 4. Calcular costo final
+        const costoTotalFinal = costoOrigenTotalItem + gastosVolumenAsignados + gastosValorAsignados;
+        const costoUnitarioFinal = costoTotalFinal / item.cantidad;
+
+        const itemEl = document.createElement('div');
+        itemEl.className = 'grid grid-cols-2 gap-4 text-sm border-b pb-2';
+        itemEl.innerHTML = `
+            <div>
+                <p class="font-semibold">${item.descripcion}</p>
+                <p class="text-xs text-gray-600">Cantidad: ${item.cantidad} (${cajasDelItem.toFixed(2)} cajas)</p>
+            </div>
+            <div class="text-right">
+                <p class="font-bold text-lg text-green-700">${formatCurrency(costoUnitarioFinal)}</p>
+                <p class="text-xs text-gray-600">Costo Unitario Final</p>
+            </div>
+        `;
+        container.appendChild(itemEl);
+    });
+}
+
 function renderTopClientes(startDate, endDate) {
     const container = document.getElementById('top-clientes-list');
     if (!container) return;
@@ -2588,6 +3752,64 @@ function renderTopClientes(startDate, endDate) {
         container.appendChild(el);
     });
 }
+
+
+/**
+ * --- NUEVA FUNCIÓN ---
+ * Muestra el modal con un formulario para editar un ítem existente.
+ * El campo de stock no es editable desde aquí.
+ * @param {object} item - El objeto del ítem a editar.
+ */
+function showEditItemModal(item) {
+    const modalContentWrapper = document.getElementById('modal-content-wrapper');
+
+    modalContentWrapper.innerHTML = `
+        <div class="bg-white rounded-lg p-6 shadow-xl max-w-lg w-full mx-auto text-left">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-semibold">Editar Ítem: ${item.referencia}</h2>
+                <button id="close-edit-item-modal" class="text-gray-500 hover:text-gray-800 text-3xl">&times;</button>
+            </div>
+            <form id="edit-item-form" class="space-y-4">
+                <input type="hidden" id="edit-item-id" value="${item.id}">
+                <div>
+                    <label class="block text-sm font-medium">Tipo (Ej: Vidrio)</label>
+                    <input type="text" id="edit-item-tipo" class="w-full p-2 border rounded-lg mt-1" value="${item.tipo}" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium">Color (Ej: Crudo)</label>
+                    <input type="text" id="edit-item-color" class="w-full p-2 border rounded-lg mt-1" value="${item.color}" required>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium">Ancho (mm)</label>
+                        <input type="number" id="edit-item-ancho" class="w-full p-2 border rounded-lg mt-1" value="${item.ancho}" required>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium">Alto (mm)</label>
+                        <input type="number" id="edit-item-alto" class="w-full p-2 border rounded-lg mt-1" value="${item.alto}" required>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium">Láminas por Caja</label>
+                    <input type="number" id="edit-item-laminas-por-caja" class="w-full p-2 border rounded-lg mt-1" value="${item.laminasPorCaja}" required min="1">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium">Stock Actual</label>
+                    <input type="number" id="edit-item-stock" class="w-full p-2 border rounded-lg mt-1 bg-gray-200" value="${item.stock}" disabled>
+                    <p class="text-xs text-gray-500 mt-1">El stock solo se puede modificar a través de importaciones y remisiones.</p>
+                </div>
+                <div class="flex justify-end pt-4">
+                    <button type="submit" class="bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-indigo-700">Guardar Cambios</button>
+                </div>
+            </form>
+        </div>
+    `;
+
+    document.getElementById('modal').classList.remove('hidden');
+    document.getElementById('close-edit-item-modal').addEventListener('click', hideModal);
+    document.getElementById('edit-item-form').addEventListener('submit', handleEditItemSubmit);
+}
+
 const modal = document.getElementById('modal');
 function showModalMessage(message, isLoader = false, duration = 0) {
     const modal = document.getElementById('modal'); // <-- Se obtiene el modal aquí
@@ -4304,10 +5526,8 @@ async function handleEstadoEnBodega(importacionId, nuevaFecha) {
 }
 
 /**
- * Guarda una nueva factura de nacionalización y actualiza solo su tarjeta en la UI.
- * @param {string} importacionId - El ID de la importación actual.
- * @param {string} gastoTipo - El tipo de gasto (ej. 'naviera').
- * @param {HTMLElement} facturaCard - El elemento HTML de la tarjeta de la factura.
+ * --- VERSIÓN SIMPLIFICADA ---
+ * Guarda una factura de nacionalización, leyendo un único "Valor Total".
  */
 async function handleSaveFacturaGasto(importacionId, gastoTipo, facturaCard) {
     const facturaId = facturaCard.dataset.facturaId;
@@ -4315,6 +5535,7 @@ async function handleSaveFacturaGasto(importacionId, gastoTipo, facturaCard) {
     const proveedorNombre = facturaCard.querySelector('.proveedor-search-input').value;
     const numeroFactura = facturaCard.querySelector('.factura-numero-input').value;
     const valorTotal = unformatCurrency(facturaCard.querySelector('.factura-valor-total-input').value);
+    const pdfFile = facturaCard.querySelector('.factura-pdf-input')?.files[0];
 
     if (!proveedorId || !numeroFactura || !(valorTotal > 0)) {
         showModalMessage("Debes seleccionar un proveedor, ingresar un N° de factura y un valor mayor a cero.");
@@ -4323,39 +5544,126 @@ async function handleSaveFacturaGasto(importacionId, gastoTipo, facturaCard) {
 
     showModalMessage("Guardando factura...", true);
 
-    const importacionRef = doc(db, "importaciones", importacionId);
-    const importacionActual = allImportaciones.find(i => i.id === importacionId);
-
-    const gastosNacionalizacion = importacionActual.gastosNacionalizacion || {};
-    if (!gastosNacionalizacion[gastoTipo]) {
-        gastosNacionalizacion[gastoTipo] = { facturas: [] };
-    }
-
-    const nuevaFactura = {
-        id: facturaId,
-        proveedorId,
-        proveedorNombre,
-        numeroFactura,
-        valorTotal,
-        abonos: []
-    };
-
-    gastosNacionalizacion[gastoTipo].facturas.push(nuevaFactura);
-
     try {
-        await updateDoc(importacionRef, { gastosNacionalizacion });
-        showTemporaryMessage("Factura guardada.", "success");
+        let pdfUrl = null;
+        if (pdfFile) {
+            const storagePath = `importaciones/${importacionId}/gastos_nacionalizacion/${facturaId}_${pdfFile.name}`;
+            const fileRef = ref(storage, storagePath);
+            const snapshot = await uploadBytes(fileRef, pdfFile);
+            pdfUrl = await getDownloadURL(snapshot.ref);
+        }
 
-        // --- INICIO DE LA CORRECCIÓN ---
-        // En lugar de redibujar todo, actualizamos solo esta tarjeta.
-        const updatedCard = createGastoFacturaElement(gastoTipo, nuevaFactura);
-        facturaCard.replaceWith(updatedCard); // Reemplaza la tarjeta vieja por la nueva
-        calcularTotalesImportacionCompleto();
-        hideModal(); // Cierra el modal de "Guardando..."
-        // --- FIN DE LA CORRECCIÓN ---
+        const nuevaFactura = { id: facturaId, proveedorId, proveedorNombre, numeroFactura, valorTotal, pdfUrl: pdfUrl, abonos: [] };
+
+        await runTransaction(db, async (transaction) => {
+            const importacionRef = doc(db, "importaciones", importacionId);
+            const importacionDoc = await transaction.get(importacionRef);
+            if (!importacionDoc.exists()) throw new Error("La importación no fue encontrada.");
+
+            const importacionActual = importacionDoc.data();
+            const gastosNacionalizacion = importacionActual.gastosNacionalizacion || {};
+            if (!gastosNacionalizacion[gastoTipo]) gastosNacionalizacion[gastoTipo] = { facturas: [] };
+            gastosNacionalizacion[gastoTipo].facturas.push(nuevaFactura);
+
+            let nuevoTotalNacionalizacionCOP = 0;
+            Object.values(gastosNacionalizacion).forEach(gasto => {
+                (gasto.facturas || []).forEach(factura => {
+                    nuevoTotalNacionalizacionCOP += factura.valorTotal || 0;
+                });
+            });
+
+            transaction.update(importacionRef, {
+                gastosNacionalizacion,
+                totalNacionalizacionCOP: nuevoTotalNacionalizacionCOP
+            });
+
+            const importacionIndex = allImportaciones.findIndex(i => i.id === importacionId);
+            if (importacionIndex !== -1) {
+                allImportaciones[importacionIndex].gastosNacionalizacion = gastosNacionalizacion;
+                allImportaciones[importacionIndex].totalNacionalizacionCOP = nuevoTotalNacionalizacionCOP;
+            }
+        });
+
+        hideModal();
+        showTemporaryMessage("Factura guardada.", "success");
+        const updatedImportacion = allImportaciones.find(i => i.id === importacionId);
+        if (updatedImportacion) showImportacionModal(updatedImportacion);
 
     } catch (error) {
         console.error("Error al guardar la factura:", error);
-        showModalMessage("No se pudo guardar la factura.");
+        showModalMessage("Error al guardar: " + error.message);
+    }
+}
+
+
+/**
+ * --- NUEVA FUNCIÓN ---
+ * Maneja la subida de un PDF para una factura de gasto que ya fue guardada.
+ * @param {string} importacionId - El ID de la importación.
+ * @param {string} gastoTipo - El tipo de gasto al que pertenece la factura.
+ * @param {string} facturaId - El ID de la factura a actualizar.
+ */
+async function handleUpdateFacturaPdf(importacionId, gastoTipo, facturaId) {
+    const facturaCard = document.querySelector(`.factura-card[data-factura-id="${facturaId}"]`);
+    if (!facturaCard) {
+        showModalMessage("Error: No se encontró la tarjeta de la factura.", "error");
+        return;
+    }
+
+    const fileInput = facturaCard.querySelector(`#update-pdf-${facturaId}`);
+    const file = fileInput.files[0];
+
+    if (!file) {
+        showModalMessage("Por favor, selecciona un archivo PDF para subir.", "error");
+        return;
+    }
+
+    showModalMessage("Subiendo PDF...", true);
+
+    try {
+        const storagePath = `importaciones/${importacionId}/gastos_nacionalizacion/${facturaId}_${file.name}`;
+        const fileRef = ref(storage, storagePath);
+        const snapshot = await uploadBytes(fileRef, file);
+        const pdfUrl = await getDownloadURL(snapshot.ref);
+
+        const importacionRef = doc(db, "importaciones", importacionId);
+
+        await runTransaction(db, async (transaction) => {
+            const importacionDoc = await transaction.get(importacionRef);
+            if (!importacionDoc.exists()) throw new Error("La importación no fue encontrada.");
+
+            const importacionActual = importacionDoc.data();
+            const gastosNacionalizacion = importacionActual.gastosNacionalizacion || {};
+
+            const gasto = gastosNacionalizacion[gastoTipo];
+            if (!gasto || !gasto.facturas) throw new Error("No se encontró el grupo de gasto.");
+
+            const facturaIndex = gasto.facturas.findIndex(f => f.id === facturaId);
+            if (facturaIndex === -1) throw new Error("No se encontró la factura para actualizar.");
+
+            // Actualiza la URL del PDF en la factura específica
+            gastosNacionalizacion[gastoTipo].facturas[facturaIndex].pdfUrl = pdfUrl;
+
+            transaction.update(importacionRef, { gastosNacionalizacion });
+
+            // Actualiza la caché local para que los cambios se reflejen
+            const importacionIndexGlobal = allImportaciones.findIndex(i => i.id === importacionId);
+            if (importacionIndexGlobal !== -1) {
+                allImportaciones[importacionIndexGlobal].gastosNacionalizacion = gastosNacionalizacion;
+            }
+        });
+
+        hideModal();
+        showTemporaryMessage("PDF de factura guardado.", "success");
+
+        // Refresca todo el modal para mostrar la tarjeta actualizada
+        const updatedImportacion = allImportaciones.find(i => i.id === importacionId);
+        if (updatedImportacion) {
+            showImportacionModal(updatedImportacion);
+        }
+
+    } catch (error) {
+        console.error("Error al actualizar el PDF de la factura:", error);
+        showModalMessage(`Error al guardar PDF: ${error.message}`);
     }
 }
