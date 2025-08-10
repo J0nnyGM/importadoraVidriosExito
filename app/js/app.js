@@ -2466,137 +2466,58 @@ function leerDocumentosDelForm(importacionActual) {
     return documentosData;
 }
 
+// En app.js
+
 /**
- * --- VERSIÓN FINAL Y DEFINITIVA: ALGORITMO DE OPTIMIZACIÓN "GUILLOTINE BSSF" ---
- * Implementa una solución de nivel industrial para el problema de empaquetado 2D.
- * - Utiliza la heurística "Best Short Side Fit" (BSSF) para encontrar el mejor hueco posible,
- * priorizando el sobrante más grande y útil.
- * - Siempre permite la rotación de piezas para una máxima eficiencia.
- * - Gestiona los espacios libres mediante una técnica robusta que garantiza que no haya sobreposiciones.
- * - El único objetivo es utilizar el mínimo número de láminas posible.
- * @param {number} anchoLamina - El ancho de la lámina maestra.
- * @param {number} altoLamina - El alto de la lámina maestra.
- * @param {Array} cortes - Un array de objetos {ancho, alto, cantidad}.
- * @returns {object} El objeto con el plano de corte más eficiente.
+ * --- FUNCIÓN "GERENTE" - PARA BÚSQUEDA EXHAUSTIVA ---
+ *
+ * Llama al Web Worker que ahora contiene el algoritmo de búsqueda exhaustiva
+ * 'exhaustive_guillotine_packer.js'.
+ * Esta función es el puente entre la aplicación y el motor de optimización.
  */
-function optimizarCortes(anchoLamina, altoLamina, cortes) {
-    let listaCortes = [];
-    let idCounter = 1;
-    cortes.forEach(c => {
-        for (let i = 0; i < c.cantidad; i++) {
-            listaCortes.push({
-                ...c,
-                id: idCounter++,
-                area: c.ancho * c.alto,
-                colocado: false,
-                anchoOriginal: c.ancho,
-                altoOriginal: c.alto
-            });
-        }
-    });
+function optimizarCortesExhaustivo(anchoLamina, altoLamina, cortes, kerf = 3) {
+    return new Promise((resolve, reject) => {
+        // La ruta al worker sigue siendo la misma
+        const worker = new Worker('js/despiece-worker.js');
 
-    listaCortes.sort((a, b) => b.area - a.area);
-
-    let laminas = [];
-    let cortesPorColocar = [...listaCortes];
-
-    while (cortesPorColocar.length > 0) {
-        let laminaActual = {
-            numero: laminas.length + 1,
-            cortes: [],
-            espaciosLibres: [{ x: 0, y: 0, ancho: anchoLamina, alto: altoLamina }]
+        worker.onmessage = function(event) {
+            if (event.data.status === 'success') {
+                resolve(event.data.resultado);
+            } else {
+                reject(new Error(event.data.message));
+            }
+            worker.terminate();
         };
 
-        let sePudoColocarAlgoEnIteracion;
-        do {
-            sePudoColocarAlgoEnIteracion = false;
-            let mejorAjuste = null; // { corte, espacioIndex, rotado, puntuacion }
-            let corteAColocarIndex = -1;
+        worker.onerror = function(error) {
+            reject(new Error(`Error en el worker: ${error.message}`));
+            worker.terminate();
+        };
 
-            for (let i = 0; i < cortesPorColocar.length; i++) {
-                const corte = cortesPorColocar[i];
-                for (let j = 0; j < laminaActual.espaciosLibres.length; j++) {
-                    const espacio = laminaActual.espaciosLibres[j];
-
-                    for (const rotado of [false, true]) {
-                        const anchoCorte = rotado ? corte.alto : corte.ancho;
-                        const altoCorte = rotado ? corte.ancho : corte.alto;
-
-                        if (anchoCorte <= espacio.ancho && altoCorte <= espacio.alto) {
-                            const puntuacion = Math.min(espacio.ancho - anchoCorte, espacio.alto - altoCorte);
-                            if (mejorAjuste === null || puntuacion < mejorAjuste.puntuacion) {
-                                mejorAjuste = { espacioIndex: j, rotado, puntuacion };
-                                corteAColocarIndex = i;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (mejorAjuste !== null) {
-                const corte = cortesPorColocar.splice(corteAColocarIndex, 1)[0];
-                const espacioElegido = laminaActual.espaciosLibres[mejorAjuste.espacioIndex];
-                const { rotado } = mejorAjuste;
-
-                const anchoCorte = rotado ? corte.alto : corte.ancho;
-                const altoCorte = rotado ? corte.ancho : corte.alto;
-
-                laminaActual.cortes.push({ ...corte, x: espacioElegido.x, y: espacioElegido.y, anchoFinal: anchoCorte, altoFinal: altoCorte, rotado });
-                sePudoColocarAlgoEnIteracion = true;
-                
-                // Dividir el espacio restante (Lógica de Guillotina) y podar la lista
-                const nuevosEspacios = [];
-                for(let i=0; i < laminaActual.espaciosLibres.length; i++){
-                    if(i !== mejorAjuste.espacioIndex) {
-                        nuevosEspacios.push(laminaActual.espaciosLibres[i]);
-                    }
-                }
-                laminaActual.espaciosLibres = nuevosEspacios;
-
-                if (espacioElegido.ancho - anchoCorte > 0) {
-                    laminaActual.espaciosLibres.push({ x: espacioElegido.x + anchoCorte, y: espacioElegido.y, ancho: espacioElegido.ancho - anchoCorte, alto: altoCorte });
-                }
-                if (espacioElegido.alto - altoCorte > 0) {
-                    laminaActual.espaciosLibres.push({ x: espacioElegido.x, y: espacioElegido.y + altoCorte, ancho: espacioElegido.ancho, alto: espacioElegido.alto - altoCorte });
-                }
-            }
-        } while (sePudoColocarAlgoEnIteracion);
-        
-        laminas.push(laminaActual);
-    }
-    
-    // Formateo final del plano
-    const planoFinal = laminas.map(lamina => ({
-        numero: lamina.numero,
-        cortes: lamina.cortes.map(c => ({
-            id: c.id,
-            ancho: c.anchoFinal,
-            alto: c.altoFinal,
-            x: c.x,
-            y: c.y,
-            descripcion: `${c.anchoOriginal}x${c.altoOriginal}${c.rotado ? ' (R)' : ''}`
-        }))
-    }));
-
-    return { numeroLaminas: laminas.length, plano: planoFinal };
+        // El mensaje que se envía al worker no cambia
+        worker.postMessage({ anchoLamina, altoLamina, cortes, kerf });
+    });
 }
 
+
+
+
 /**
- * --- VERSIÓN CON LÓGICA DE IVA INCLUIDO ---
- * Calcula el costo por cortes y especifica que estos valores ya incluyen IVA.
- * @param {number} totalCortes - El número total de cortes individuales a realizar.
- * @returns {{costo: number, descripcion: string, ivaIncluido: boolean}}
+ * --- VERSIÓN CORREGIDA ---
+ * Devuelve el costo NOMINAL del servicio de corte para UNA LÁMINA.
+ * La interpretación de si este valor incluye IVA o es la base
+ * se hace en la función que la llama (calcularTotales / handleRemisionSubmit).
+ * @param {number} numeroDeCortesEnLamina - El número de cortes en una lámina específica.
+ * @returns {number} - El costo nominal del servicio (0, 15000 o 20000).
  */
-function calcularCostoDeCortes(totalCortes) {
-    if (totalCortes <= 3) {
-        return { costo: 0, descripcion: "Hasta 3 cortes sin costo", ivaIncluido: false };
+function calcularCargoPorLamina(numeroDeCortesEnLamina) {
+    if (numeroDeCortesEnLamina >= 4 && numeroDeCortesEnLamina <= 10) {
+        return 15000;
     }
-    if (totalCortes <= 10) {
-        // El valor de 15.000 ya incluye el IVA
-        return { costo: 15000, descripcion: `Cargo por ${totalCortes} cortes`, ivaIncluido: true };
+    if (numeroDeCortesEnLamina > 10) {
+        return 20000;
     }
-    // El valor de 20.000 ya incluye el IVA
-    return { costo: 20000, descripcion: `Cargo especial por ${totalCortes} cortes`, ivaIncluido: true };
+    return 0;
 }
 
 // --- FUNCIONES DE MANEJO DE ACCIONES ---
@@ -2684,9 +2605,9 @@ async function handleItemSubmit(e) {
 }
 
 /**
- * --- VERSIÓN FINAL Y COMPLETA CON GUARDADO DE DESPIECE ---
- * Se corrige el error final que impedía que el 'planoDespiece' se guardara
- * correctamente en el documento de la remisión en Firestore.
+ * --- VERSIÓN CORREGIDA PARA WEB WORKER ---
+ * Procesa y guarda la remisión, manejando correctamente la respuesta
+ * asíncrona del Web Worker.
  */
 async function handleRemisionSubmit(e) {
     e.preventDefault();
@@ -2697,34 +2618,31 @@ async function handleRemisionSubmit(e) {
         return;
     }
 
-    showModalMessage("Guardando remisión y actualizando stock...", true);
+    showModalMessage("Optimizando y guardando remisión...", true);
 
     try {
         const itemsParaGuardar = [];
         const cargosAdicionales = [];
         const stockUpdates = {};
         const incluyeIVA = document.getElementById('incluir-iva').checked;
+        const kerf = 3;
 
         for (const itemRow of document.querySelectorAll('.item-row')) {
             const itemId = itemRow.querySelector('.item-id-hidden').value;
             const itemSeleccionado = allItems.find(i => i.id === itemId);
-            if (!itemSeleccionado) throw new Error("Has seleccionado un ítem inválido.");
+            if (!itemSeleccionado) continue;
 
-            const valorPorLaminaConIVA = unformatCurrency(itemRow.querySelector('.item-valor-lamina').value);
-            if (isNaN(valorPorLaminaConIVA) || valorPorLaminaConIVA <= 0) {
-                throw new Error(`Debes ingresar un valor válido para el ítem: ${itemSeleccionado.descripcion}.`);
-            }
-            
-            const valorPorLaminaBase = incluyeIVA ? valorPorLaminaConIVA / 1.19 : valorPorLaminaConIVA;
+            const precioInput = unformatCurrency(itemRow.querySelector('.item-valor-lamina').value);
+            const valorLaminaBase = (incluyeIVA && precioInput > 0) ? precioInput / 1.19 : precioInput;
             const tipoCorte = itemRow.querySelector('.tipo-corte-radio:checked').value;
 
             if (tipoCorte === 'completa') {
                 const cantidad = parseInt(itemRow.querySelector('.item-cantidad-completa').value) || 0;
                 if (cantidad > 0) {
-                    itemsParaGuardar.push({ itemId, descripcion: itemSeleccionado.descripcion, tipo: 'Completa', cantidad, valorUnitario: valorPorLaminaBase, valorTotal: valorPorLaminaBase * cantidad });
+                    itemsParaGuardar.push({ itemId, descripcion: itemSeleccionado.descripcion, tipo: 'Completa', cantidad, valorUnitario: valorLaminaBase, valorTotal: valorLaminaBase * cantidad });
                     stockUpdates[itemId] = (stockUpdates[itemId] || 0) + cantidad;
                 }
-            } else {
+            } else { // 'cortada'
                 const cortes = Array.from(itemRow.querySelectorAll('.cut-row')).map(row => ({
                     ancho: parseInt(row.querySelector('.cut-ancho').value) || 0,
                     alto: parseInt(row.querySelector('.cut-alto').value) || 0,
@@ -2732,34 +2650,40 @@ async function handleRemisionSubmit(e) {
                 })).filter(c => c.ancho > 0 && c.alto > 0);
 
                 if (cortes.length > 0) {
-                    const estrategiaSeleccionada = itemRow.querySelector('.estrategia-radio:checked').value;
-                    const resultadoDespiece = optimizarCortes(itemSeleccionado.ancho, itemSeleccionado.alto, cortes, estrategiaSeleccionada);
+                    const resultadoDespiece = await optimizarCortesExhaustivo(itemSeleccionado.ancho, itemSeleccionado.alto, cortes, kerf);
                     const laminasNecesarias = resultadoDespiece.numeroLaminas;
                     
-                    // --- INICIO DE LA CORRECCIÓN CLAVE ---
-                    // Se asegura que el 'planoDespiece' se incluya en el objeto a guardar.
                     itemsParaGuardar.push({
                         itemId,
                         descripcion: itemSeleccionado.descripcion,
                         tipo: 'Cortada',
                         cantidad: laminasNecesarias,
-                        valorUnitario: valorPorLaminaBase,
-                        valorTotal: valorPorLaminaBase * laminasNecesarias,
+                        valorUnitario: valorLaminaBase,
+                        valorTotal: valorLaminaBase * laminasNecesarias,
                         cortes,
-                        planoDespiece: resultadoDespiece.plano // Esta línea es la que se corrigió
+                        planoDespiece: resultadoDespiece.plano,
+                        metricasDespiece: resultadoDespiece.metricas
                     });
-                    // --- FIN DE LA CORRECCIÓN CLAVE ---
 
                     stockUpdates[itemId] = (stockUpdates[itemId] || 0) + laminasNecesarias;
                     
-                    resultadoDespiece.plano.forEach(lamina => {
-                        const cortesEnEstaLamina = lamina.cortes.length;
-                        const cargo = calcularCostoDeCortes(cortesEnEstaLamina);
-                        if (cargo.costo > 0) {
-                            const valorCargoBase = (incluyeIVA && cargo.ivaIncluido) ? cargo.costo / 1.19 : cargo.costo;
-                            cargosAdicionales.push({ descripcion: `${cargo.descripcion} (Lámina ${lamina.numero})`, valorUnitario: valorCargoBase, valorTotal: valorCargoBase });
-                        }
-                    });
+                    // --- CORRECCIÓN CLAVE ---
+                    // Se accede a resultadoDespiece.plano en lugar de un objeto indefinido
+                    if (resultadoDespiece.plano) {
+                        resultadoDespiece.plano.forEach((lamina, index) => {
+                            const numCortes = lamina.cortes.length;
+                            const cargoNominal = calcularCargoPorLamina(numCortes);
+
+                            if (cargoNominal > 0) {
+                                const cargoBase = incluyeIVA ? cargoNominal / 1.19 : cargoNominal;
+                                cargosAdicionales.push({
+                                    descripcion: `Corte (${numCortes} pzs) - Lám. ${index + 1} de ${itemSeleccionado.descripcion}`,
+                                    valorUnitario: cargoBase,
+                                    valorTotal: cargoBase
+                                });
+                            }
+                        });
+                    }
                 }
             }
         }
@@ -2808,6 +2732,9 @@ async function handleRemisionSubmit(e) {
             const itemActual = allItems.find(i => i.id === itemId);
             if (itemActual) {
                 const nuevoStock = (itemActual.stock || 0) - cantidadADescontar;
+                if (nuevoStock < 0) {
+                    throw new Error(`Stock insuficiente para el ítem: ${itemActual.descripcion}. Stock actual: ${itemActual.stock}, se necesitan: ${cantidadADescontar}.`);
+                }
                 batch.update(itemRef, { stock: nuevoStock });
             }
         }
@@ -2816,7 +2743,7 @@ async function handleRemisionSubmit(e) {
 
         e.target.reset();
         document.getElementById('items-container').innerHTML = '';
-        calcularTotales();
+        await calcularTotales();
         hideModal();
         showTemporaryMessage("¡Remisión guardada con éxito!", "success");
 
@@ -2825,6 +2752,7 @@ async function handleRemisionSubmit(e) {
         showModalMessage(`Error: ${error.message}`);
     }
 }
+
 
 /**
  * --- FUNCIONES AUXILIARES FALTANTES ---
@@ -3241,54 +3169,95 @@ function createCutElement() {
 }
 
 /**
- * --- VERSIÓN REMISIONES 2.0: CÁLCULO DE TOTALES ---
- * Calcula los totales del formulario de remisión, considerando la nueva
- * lógica de láminas completas, cortadas y los cargos por corte.
+ * --- VERSIÓN CORREGIDA PARA WEB WORKER ---
+ * Calcula los totales en tiempo real, manejando correctamente la respuesta
+ * asíncrona del Web Worker.
  */
-function calcularTotales() {
-    const ivaCheckbox = document.getElementById('incluir-iva');
-    const subtotalEl = document.getElementById('subtotal');
-    const valorIvaEl = document.getElementById('valor-iva');
-    const valorTotalEl = document.getElementById('valor-total');
+async function calcularTotales() {
+    let subtotalMaterialesGeneral = 0;
+    let subtotalCortesGeneral = 0;
+    const itemRows = document.querySelectorAll('.item-row');
+    const incluyeIVA = document.getElementById('incluir-iva')?.checked || false;
+    const kerf = 3;
 
-    let subtotalItems = 0;
-    let subtotalCargos = 0;
+    const saveButton = document.querySelector('button[type="submit"]');
+    if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.textContent = 'Calculando...';
+    }
 
-    document.querySelectorAll('.item-row').forEach(itemRow => {
-        const itemId = itemRow.querySelector('.item-id-hidden').value;
-        const costoPromedioItem = allItemAverageCosts[itemId] || 0;
-        const tipoCorte = itemRow.querySelector('.tipo-corte-radio:checked').value;
+    for (const itemRow of document.querySelectorAll('.item-row')) {
+        const itemId = itemRow.querySelector('.item-id-hidden')?.value;
+        const itemSeleccionado = allItems.find(i => i.id === itemId);
+        if (!itemSeleccionado) continue;
+
+        const precioInput = unformatCurrency(itemRow.querySelector('.item-valor-lamina')?.value || '0');
+        const valorLaminaBase = (incluyeIVA && precioInput > 0) ? precioInput / 1.19 : precioInput;
+        const tipoCorte = itemRow.querySelector('.tipo-corte-radio:checked')?.value;
+        
+        let subtotalMaterialBaseParaLaFila = 0;
+        let subtotalCortesBaseParaLaFila = 0;
 
         if (tipoCorte === 'completa') {
-            const cantidad = parseInt(itemRow.querySelector('.item-cantidad-completa').value) || 0;
-            subtotalItems += cantidad * costoPromedioItem;
-        } else { // 'cortada'
-            const cortes = Array.from(itemRow.querySelectorAll('.cut-row')).map(cutRow => ({
-                cantidad: parseInt(cutRow.querySelector('.cut-cantidad').value) || 1
-            }));
+            const cantidad = parseInt(itemRow.querySelector('.item-cantidad-completa')?.value || '0', 10);
+            subtotalMaterialBaseParaLaFila = cantidad * valorLaminaBase;
+        } else if (tipoCorte === 'cortada') {
+            const cortes = Array.from(itemRow.querySelectorAll('.cut-row')).map(row => ({
+                ancho: parseInt(row.querySelector('.cut-ancho')?.value || '0', 10),
+                alto: parseInt(row.querySelector('.cut-alto')?.value || '0', 10),
+                cantidad: parseInt(row.querySelector('.cut-cantidad')?.value || '1', 10)
+            })).filter(c => c.ancho > 0 && c.alto > 0);
 
-            // Este es un cálculo SIMPLIFICADO para la UI. El cálculo real se hace al guardar.
-            // Aquí asumimos 1 lámina como base para no sobrecargar la interfaz.
-            subtotalItems += costoPromedioItem * 1; // Estimación simple
-
-            const totalCortes = cortes.reduce((sum, c) => sum + c.cantidad, 0);
-            const cargoCorte = calcularCostoDeCortes(totalCortes);
-            if (cargoCorte.costo > 0) {
-                subtotalCargos += cargoCorte.costo;
+            if (cortes.length > 0) {
+                try {
+                    const resultadoDespiece = await optimizarCortesExhaustivo(itemSeleccionado.ancho, itemSeleccionado.alto, cortes, kerf);
+                    subtotalMaterialBaseParaLaFila = resultadoDespiece.numeroLaminas * valorLaminaBase;
+                    
+                    // --- CORRECCIÓN CLAVE ---
+                    // Se accede a resultadoDespiece.plano en lugar de un objeto indefinido
+                    if (resultadoDespiece.plano) {
+                        resultadoDespiece.plano.forEach(lamina => {
+                            const cargoNominal = calcularCargoPorLamina(lamina.cortes.length);
+                            if (cargoNominal > 0) {
+                                const cargoBase = incluyeIVA ? cargoNominal / 1.19 : cargoNominal;
+                                subtotalCortesBaseParaLaFila += cargoBase;
+                            }
+                        });
+                    }
+                } catch (error) {
+                    console.error("Error en la optimización durante el cálculo de totales:", error);
+                    // Opcional: mostrar un mensaje de error al usuario
+                }
             }
         }
-    });
+        
+        subtotalMaterialesGeneral += subtotalMaterialBaseParaLaFila;
+        subtotalCortesGeneral += subtotalCortesBaseParaLaFila;
 
-    const subtotalGeneral = subtotalItems + subtotalCargos;
-    const incluyeIVA = ivaCheckbox.checked;
-    const valorIVA = incluyeIVA ? Math.round(subtotalGeneral * 0.19) : 0;
-    const total = subtotalGeneral + valorIVA;
+        const subtotalFilaBase = subtotalMaterialBaseParaLaFila + subtotalCortesBaseParaLaFila;
+        const subtotalFilaFinal = incluyeIVA ? subtotalFilaBase * 1.19 : subtotalFilaBase;
+        const subtotalItemElem = itemRow.querySelector('.item-subtotal');
+        if (subtotalItemElem) {
+            subtotalItemElem.textContent = formatCurrency(Math.round(subtotalFilaFinal));
+        }
+    }
 
-    subtotalEl.textContent = formatCurrency(subtotalGeneral);
-    valorIvaEl.textContent = formatCurrency(valorIVA);
-    valorTotalEl.textContent = formatCurrency(total);
+    const subtotalGeneralBase = subtotalMaterialesGeneral + subtotalCortesGeneral;
+    const valorIVA = incluyeIVA ? subtotalGeneralBase * 0.19 : 0;
+    const totalFinal = subtotalGeneralBase + valorIVA;
 
-    return { subtotalGeneral, valorIVA, total };
+    const subtotalElem = document.getElementById('subtotal');
+    const ivaElem = document.getElementById('valor-iva');
+    const totalElem = document.getElementById('valor-total');
+
+    if (subtotalElem) subtotalElem.textContent = formatCurrency(Math.round(subtotalGeneralBase));
+    if (ivaElem) ivaElem.textContent = formatCurrency(Math.round(valorIVA));
+    if (totalElem) totalElem.textContent = formatCurrency(Math.round(totalFinal));
+    
+    if (saveButton) {
+        saveButton.disabled = false;
+        saveButton.textContent = 'Guardar Remisión';
+    }
 }
 
 function showEditClientModal(client) { const modalContentWrapper = document.getElementById('modal-content-wrapper'); modalContentWrapper.innerHTML = `<div class="bg-white rounded-lg p-6 shadow-xl max-w-sm w-full mx-auto text-center"><h2 class="text-xl font-semibold mb-4">Editar Cliente</h2><form id="edit-client-form" class="space-y-4 text-left"><input type="hidden" id="edit-client-id" value="${client.id}"><div><label for="edit-client-name" class="block text-sm font-medium text-gray-700">Nombre</label><input type="text" id="edit-client-name" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${client.nombre}" required></div><div><label for="edit-client-email" class="block text-sm font-medium text-gray-700">Correo</label><input type="email" id="edit-client-email" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${client.email}" required></div><div><label for="edit-client-phone1" class="block text-sm font-medium text-gray-700">Teléfono 1</label><input type="tel" id="edit-client-phone1" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${client.telefono1 || ''}" required></div><div><label for="edit-client-phone2" class="block text-sm font-medium text-gray-700">Teléfono 2</label><input type="tel" id="edit-client-phone2" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${client.telefono2 || ''}"></div><div><label for="edit-client-nit" class="block text-sm font-medium text-gray-700">NIT</label><input type="text" id="edit-client-nit" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${client.nit || ''}"></div><div class="flex gap-4 justify-end pt-4"><button type="button" id="cancel-edit-btn" class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-semibold">Cancelar</button><button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-semibold">Guardar Cambios</button></div></form></div>`; document.getElementById('modal').classList.remove('hidden'); document.getElementById('cancel-edit-btn').addEventListener('click', hideModal); document.getElementById('edit-client-form').addEventListener('submit', async (e) => { e.preventDefault(); const clientId = document.getElementById('edit-client-id').value; const updatedData = { nombre: document.getElementById('edit-client-name').value, email: document.getElementById('edit-client-email').value, telefono1: document.getElementById('edit-client-phone1').value, telefono2: document.getElementById('edit-client-phone2').value, nit: document.getElementById('edit-client-nit').value, }; showModalMessage("Actualizando cliente...", true); try { await updateDoc(doc(db, "clientes", clientId), updatedData); hideModal(); showModalMessage("¡Cliente actualizado!", false, 2000); } catch (error) { console.error("Error al actualizar cliente:", error); showModalMessage("Error al actualizar."); } }); }
