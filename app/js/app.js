@@ -117,26 +117,52 @@ onAuthStateChanged(auth, async (user) => {
 });
 
 
-// --- INICIALIZACIÓN DEL SCRIPT ---
+/**
+ * --- INICIO DE LA APLICACIÓN (LÓGICA FINAL Y ROBUSTA) ---
+ * Esta es la nueva secuencia de inicio a prueba de errores. Se asegura de que
+ * todo el HTML de las vistas exista antes de intentar asignarles eventos.
+ */
 document.addEventListener('DOMContentLoaded', () => {
+    // 1. Lo primero y más importante: construir toda la estructura HTML de las vistas.
     loadViewTemplates();
+
+    // 2. Asignar listeners a los formularios de login/registro, que son estáticos y siempre existen.
     loginForm.addEventListener('submit', handleLoginSubmit);
     registerForm.addEventListener('submit', handleRegisterSubmit);
     document.getElementById('show-register-link').addEventListener('click', (e) => { e.preventDefault(); loginForm.classList.add('hidden'); registerForm.classList.remove('hidden'); });
     document.getElementById('logout-denied-user').addEventListener('click', () => signOut(auth));
+
+    // 3. Dejar que Firebase maneje el estado de autenticación.
+    // onAuthStateChanged se encargará de llamar a startApp() una vez que
+    // el usuario esté verificado, garantizando que el HTML base ya está cargado.
 });
 
 
-// --- LÓGICA DE LA APLICACIÓN ---
+/**
+ * --- VERSIÓN CORREGIDA Y ROBUSTA ---
+ * Inicia la aplicación principal DESPUÉS de que el usuario se ha autenticado
+ * y el DOM inicial está listo.
+ */
 function startApp() {
     if (isAppInitialized) return;
-    updateUIVisibility(currentUserData);
-    setupEventListeners();
-    loadAllData();
-    setupSearchInputs();
-    isAppInitialized = true;
-}
 
+    console.log("Iniciando la aplicación principal...");
+    
+    // 1. Ajustar la visibilidad de la UI según los permisos del usuario.
+    updateUIVisibility(currentUserData);
+    
+    // 2. Ahora que el HTML de las vistas existe, podemos asignar los listeners.
+    setupEventListeners();
+    
+    // 3. Cargar todos los datos de la base de datos.
+    loadAllData();
+    
+    // 4. Inicializar los campos de búsqueda.
+    setupSearchInputs();
+    
+    isAppInitialized = true;
+    console.log("Aplicación inicializada correctamente.");
+}
 
 // --- LÓGICA DE CARGA DE DATOS ---
 function loadAllData() {
@@ -2466,41 +2492,286 @@ function leerDocumentosDelForm(importacionActual) {
     return documentosData;
 }
 
-// En app.js
+function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
+  // ===== Opciones =====
+  const MAX_TIME_MS  = opts.maxTimeMs ?? 60000;
+  const KERF         = Math.max(0, opts.kerf ?? 0);
+  const MARGIN       = Math.max(0, opts.margin ?? 0);
+  const DEBUG        = !!opts.debug;
+  const MAX_RESTARTS = Math.max(1, opts.maxRestarts ?? 10);
 
-/**
- * --- FUNCIÓN "GERENTE" - PARA BÚSQUEDA EXHAUSTIVA ---
- *
- * Llama al Web Worker que ahora contiene el algoritmo de búsqueda exhaustiva
- * 'exhaustive_guillotine_packer.js'.
- * Esta función es el puente entre la aplicación y el motor de optimización.
- */
-function optimizarCortesExhaustivo(anchoLamina, altoLamina, cortes, kerf = 3) {
-    return new Promise((resolve, reject) => {
-        // La ruta al worker sigue siendo la misma
-        const worker = new Worker('js/despiece-worker.js');
+  const t0 = Date.now();
+  const timeLeft = () => (Date.now() - t0) < MAX_TIME_MS;
 
-        worker.onmessage = function(event) {
-            if (event.data.status === 'success') {
-                resolve(event.data.resultado);
-            } else {
-                reject(new Error(event.data.message));
+  // ===== Clase MaxRects (definida ANTES de usarla) =====
+  class MaxRectsBin {
+    constructor(width, height, kerf = 0) {
+      this.binW = width;
+      this.binH = height;
+      this.kerf = kerf;
+      this.freeRects = [{ x: 0, y: 0, w: width, h: height }];
+      this.usedRects = [];
+    }
+
+    // Heurística: BAF (area), BSSF (short side), BL (bottom-left)
+    scoreFor(node, fr, heuristic) {
+      switch (heuristic) {
+        case 'BSSF': {
+          const ssf = Math.min(Math.abs(fr.w - node.w), Math.abs(fr.h - node.h));
+          const lsf = Math.max(Math.abs(fr.w - node.w), Math.abs(fr.h - node.h));
+          return { primary: ssf, secondary: lsf };
+        }
+        case 'BL': {
+          return { primary: node.y, secondary: node.x };
+        }
+        case 'BAF':
+        default: {
+          const freeArea = fr.w * fr.h;
+          const fit = freeArea - node.w * node.h;
+          const ssf = Math.min(Math.abs(fr.w - node.w), Math.abs(fr.h - node.h));
+          return { primary: fit, secondary: ssf };
+        }
+      }
+    }
+
+    findPositionForNewNode(w, h, allowRotate, heuristic) {
+      let bestNode = null;
+      let bestScore = { primary: Infinity, secondary: Infinity };
+
+      const tryRect = (rw, rh) => {
+        for (const fr of this.freeRects) {
+          if (rw <= fr.w && rh <= fr.h) {
+            const node = { x: fr.x, y: fr.y, w: rw, h: rh };
+            const score = this.scoreFor(node, fr, heuristic);
+            if (comparePlacement(score, bestScore) < 0) {
+              bestScore = score; bestNode = node;
             }
-            worker.terminate();
-        };
+          }
+        }
+      };
 
-        worker.onerror = function(error) {
-            reject(new Error(`Error en el worker: ${error.message}`));
-            worker.terminate();
-        };
+      tryRect(w, h);
+      if (allowRotate && w !== h) tryRect(h, w);
 
-        // El mensaje que se envía al worker no cambia
-        worker.postMessage({ anchoLamina, altoLamina, cortes, kerf });
+      return bestNode ? { node: bestNode, score: bestScore } : null;
+    }
+
+    placeRect(node) {
+      // Split + prune según MaxRects (con kerf)
+      const newFree = [];
+      for (let i = 0; i < this.freeRects.length; i++) {
+        const fr = this.freeRects[i];
+        if (!intersects(fr, node)) {
+          newFree.push(fr);
+          continue;
+        }
+        // Arriba
+        if (node.y > fr.y) {
+          const h = Math.max(0, node.y - fr.y - this.kerf);
+          if (h > 0) newFree.push({ x: fr.x, y: fr.y, w: fr.w, h });
+        }
+        // Abajo
+        if (node.y + node.h < fr.y + fr.h) {
+          const y = node.y + node.h + this.kerf;
+          const h = Math.max(0, (fr.y + fr.h) - (node.y + node.h) - this.kerf);
+          if (h > 0) newFree.push({ x: fr.x, y, w: fr.w, h });
+        }
+        // Izquierda
+        if (node.x > fr.x) {
+          const w = Math.max(0, node.x - fr.x - this.kerf);
+          if (w > 0) newFree.push({ x: fr.x, y: fr.y, w, h: fr.h });
+        }
+        // Derecha
+        if (node.x + node.w < fr.x + fr.w) {
+          const x = node.x + node.w + this.kerf;
+          const w = Math.max(0, (fr.x + fr.w) - (node.x + node.w) - this.kerf);
+          if (w > 0) newFree.push({ x, y: fr.y, w, h: fr.h });
+        }
+      }
+      this.freeRects = pruneFree(newFree);
+      this.usedRects.push(node);
+
+      function intersects(a, b) {
+        return !(b.x >= a.x + a.w || b.x + b.w <= a.x || b.y >= a.y + a.h || b.y + b.h <= a.y);
+      }
+      function contains(A, B) {
+        return B.x >= A.x && B.y >= A.y && B.x + B.w <= A.x + A.w && B.y + B.h <= A.y + A.h;
+      }
+      function pruneFree(list) {
+        // fusiona/limpia rect libres contenidos
+        const out = [];
+        for (let i = 0; i < list.length; i++) {
+          let contained = false;
+          for (let j = 0; j < list.length; j++) {
+            if (i !== j && contains(list[j], list[i])) { contained = true; break; }
+          }
+          if (!contained && list[i].w > 0 && list[i].h > 0) out.push(list[i]);
+        }
+        return out;
+      }
+    }
+  }
+
+  function comparePlacement(a, b) {
+    if (a.primary !== b.primary) return a.primary - b.primary;
+    return (a.secondary ?? 0) - (b.secondary ?? 0);
+  }
+
+  // ===== Aplanar piezas =====
+  let piezas = []; let id = 1;
+  for (const c of cortes) {
+    for (let i = 0; i < c.cantidad; i++) {
+      piezas.push({ id: id++, w: c.ancho, h: c.alto, w0: c.ancho, h0: c.alto, area: c.ancho * c.alto });
+    }
+  }
+
+  // ===== Validación: deben caber dentro del área útil =====
+  const innerW = sheetW - 2 * MARGIN;
+  const innerH = sheetH - 2 * MARGIN;
+  for (const p of piezas) {
+    const fits = (p.w <= innerW && p.h <= innerH) || (p.h <= innerW && p.w <= innerH);
+    if (!fits) throw new Error(`La pieza ${p.w}x${p.h} no cabe en la lámina ${sheetW}x${sheetH} con margen ${MARGIN}.`);
+  }
+
+  // ===== Cotas por área =====
+  const totalArea = piezas.reduce((s, p) => s + p.area, 0);
+  const sheetAreaNet = Math.max(0, innerW) * Math.max(0, innerH);
+  const lowerBound = Math.max(1, Math.ceil(totalArea / sheetAreaNet));
+
+  // Cota superior rápida (greedy multi-bin)
+  const upperGreedy = packMultiBinMaxRects(piezas, sheetW, sheetH, { kerf: KERF, margin: MARGIN, heuristic: 'BAF' }).count;
+  if (DEBUG) console.log(`LB=${lowerBound}, UB=${upperGreedy}, piezas=${piezas.length}`);
+
+  // ===== Búsqueda binaria en k =====
+  let bestPlan = null;
+  let lo = lowerBound, hi = upperGreedy;
+
+  while (lo <= hi && timeLeft()) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (DEBUG) console.log(`Probar k=${mid}`);
+
+    const attempt = tryPackAtMostK(piezas, sheetW, sheetH, mid, {
+      kerf: KERF, margin: MARGIN, maxRestarts: MAX_RESTARTS, debug: DEBUG, timeLeft
     });
+
+    if (attempt && attempt.count <= mid) {
+      bestPlan = attempt;      // factible → intenta bajar
+      hi = attempt.count - 1;
+    } else {
+      lo = mid + 1;            // no factible → sube
+    }
+  }
+
+  if (!bestPlan) {
+    // salvavidas si se agotó tiempo
+    bestPlan = packMultiBinMaxRects(piezas, sheetW, sheetH, { kerf: KERF, margin: MARGIN, heuristic: 'BAF' });
+  }
+
+  // ===== Salida =====
+  const plano = bestPlan.sheets.map((bin, i) => ({
+    numero: i + 1,
+    cortes: bin.placed.map(r => ({
+      id: r.id,
+      ancho: r.w,
+      alto: r.h,
+      x: r.x,
+      y: r.y,
+      descripcion: `${r.w0}x${r.h0}${r.rot ? ' (R)' : ''}`
+    }))
+  }));
+  return { numeroLaminas: bestPlan.count, plano };
+
+  // ======== Helpers de empaquetado multi-bin (MaxRects) ========
+  function tryPackAtMostK(pieces, W, H, K, params) {
+    const orients = [
+      { name: 'Normal', W, H },
+      { name: 'Rotada', W: H, H: W }
+    ];
+    const heuristics = ['BAF', 'BSSF', 'BL'];
+    let best = null;
+
+    for (const o of orients) {
+      for (const h of heuristics) {
+        if (!params.timeLeft()) break;
+
+        const orders = [
+          (a, b) => b.area - a.area,
+          (a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h),
+          (a, b) => b.h - a.h,
+          (a, b) => b.w - a.w
+        ];
+        for (let r = 0; r < Math.min(orders.length, params.maxRestarts); r++) {
+          if (!params.timeLeft()) break;
+          const sorted = pieces.slice().sort(orders[r]);
+          const res = packMultiBinMaxRects(sorted, o.W, o.H, { kerf: params.kerf, margin: params.margin, heuristic: h, maxBins: K });
+          if (!best || res.count < best.count || (res.count === best.count && res.waste < best.waste)) {
+            best = { ...res, tag: `${o.name}|${h}|r${r}` };
+          }
+          if (best.count <= K) return best;
+        }
+      }
+    }
+    return best;
+  }
+
+  function packMultiBinMaxRects(pieces, W, H, { kerf = 0, margin = 0, heuristic = 'BAF', maxBins = Infinity } = {}) {
+    const bins = [];
+    let remaining = pieces.map(p => ({ ...p }));
+
+    while (remaining.length) {
+      if (bins.length >= maxBins) break;
+
+      const bin = new MaxRectsBin(W - 2 * margin, H - 2 * margin, kerf);
+      const placed = [];
+      let progress = true;
+
+      while (progress && remaining.length) {
+        progress = false;
+
+        let best = null, bestIdx = -1, bestNode = null;
+        for (let i = 0; i < remaining.length; i++) {
+          const p = remaining[i];
+          const cand = bin.findPositionForNewNode(p.w, p.h, true, heuristic);
+          if (cand) {
+            if (!best || comparePlacement(cand.score, best.score) < 0) {
+              best = cand; bestIdx = i; bestNode = cand.node;
+            }
+          }
+        }
+
+        if (best) {
+          bin.placeRect(bestNode);
+          const original = remaining[bestIdx];
+          placed.push({
+            id: original.id,
+            x: bestNode.x + margin,
+            y: bestNode.y + margin,
+            w: bestNode.w,
+            h: bestNode.h,
+            w0: original.w0,
+            h0: original.h0,
+            rot: (bestNode.w === original.h && bestNode.h === original.w)
+          });
+          remaining.splice(bestIdx, 1);
+          progress = true;
+        }
+      }
+
+      bins.push({ placed });
+      if (!progress && remaining.length) {
+        if (bins.length >= maxBins) break;
+      }
+    }
+
+    if (remaining.length) {
+      return { count: Infinity, sheets: bins, waste: Infinity };
+    }
+
+    const areaNet = (W - 2 * margin) * (H - 2 * margin);
+    const waste = bins.reduce((t, b) => t + (areaNet - b.placed.reduce((s, r) => s + r.w * r.h, 0)), 0);
+    return { count: bins.length, sheets: bins, waste };
+  }
 }
-
-
-
 
 /**
  * --- VERSIÓN CORREGIDA ---
@@ -2605,9 +2876,12 @@ async function handleItemSubmit(e) {
 }
 
 /**
- * --- VERSIÓN CORREGIDA PARA WEB WORKER ---
- * Procesa y guarda la remisión, manejando correctamente la respuesta
- * asíncrona del Web Worker.
+ * --- VERSIÓN FINAL, COMPLETA Y ROBUSTA ---
+ * Maneja el guardado de la remisión con toda la nueva lógica de negocio.
+ * - Valida el stock antes de procesar.
+ * - Llama al algoritmo de optimización avanzado de forma asíncrona y segura.
+ * - Calcula cargos por corte por lámina y desglosa el IVA correctamente.
+ * - Guarda la remisión y actualiza el stock de forma atómica.
  */
 async function handleRemisionSubmit(e) {
     e.preventDefault();
@@ -2618,31 +2892,30 @@ async function handleRemisionSubmit(e) {
         return;
     }
 
-    showModalMessage("Optimizando y guardando remisión...", true);
+    showModalMessage("Validando stock y procesando remisión...", true);
 
     try {
         const itemsParaGuardar = [];
         const cargosAdicionales = [];
         const stockUpdates = {};
         const incluyeIVA = document.getElementById('incluir-iva').checked;
-        const kerf = 3;
+        const itemRows = document.querySelectorAll('.item-row');
 
-        for (const itemRow of document.querySelectorAll('.item-row')) {
+        // 1. PRIMERA PASADA: Calcular el total de stock necesario por ítem
+        const stockNecesario = {};
+        for (const itemRow of itemRows) {
             const itemId = itemRow.querySelector('.item-id-hidden').value;
-            const itemSeleccionado = allItems.find(i => i.id === itemId);
-            if (!itemSeleccionado) continue;
+            if (!itemId) continue;
 
-            const precioInput = unformatCurrency(itemRow.querySelector('.item-valor-lamina').value);
-            const valorLaminaBase = (incluyeIVA && precioInput > 0) ? precioInput / 1.19 : precioInput;
+            const itemSeleccionado = allItems.find(i => i.id === itemId);
+            if (!itemSeleccionado) throw new Error("Has seleccionado un ítem inválido.");
+
             const tipoCorte = itemRow.querySelector('.tipo-corte-radio:checked').value;
+            let cantidadNecesaria = 0;
 
             if (tipoCorte === 'completa') {
-                const cantidad = parseInt(itemRow.querySelector('.item-cantidad-completa').value) || 0;
-                if (cantidad > 0) {
-                    itemsParaGuardar.push({ itemId, descripcion: itemSeleccionado.descripcion, tipo: 'Completa', cantidad, valorUnitario: valorLaminaBase, valorTotal: valorLaminaBase * cantidad });
-                    stockUpdates[itemId] = (stockUpdates[itemId] || 0) + cantidad;
-                }
-            } else { // 'cortada'
+                cantidadNecesaria = parseInt(itemRow.querySelector('.item-cantidad-completa').value) || 0;
+            } else {
                 const cortes = Array.from(itemRow.querySelectorAll('.cut-row')).map(row => ({
                     ancho: parseInt(row.querySelector('.cut-ancho').value) || 0,
                     alto: parseInt(row.querySelector('.cut-alto').value) || 0,
@@ -2650,46 +2923,72 @@ async function handleRemisionSubmit(e) {
                 })).filter(c => c.ancho > 0 && c.alto > 0);
 
                 if (cortes.length > 0) {
-                    const resultadoDespiece = await optimizarCortesExhaustivo(itemSeleccionado.ancho, itemSeleccionado.alto, cortes, kerf);
+                    const resultadoDespiece = await optimizarCortes(itemSeleccionado.ancho, itemSeleccionado.alto, cortes);
+                    cantidadNecesaria = resultadoDespiece.numeroLaminas;
+                }
+            }
+            stockNecesario[itemId] = (stockNecesario[itemId] || 0) + cantidadNecesaria;
+        }
+
+        // 2. VALIDACIÓN DE STOCK
+        for (const itemId in stockNecesario) {
+            const itemEnInventario = allItems.find(i => i.id === itemId);
+            const stockDisponible = itemEnInventario ? itemEnInventario.stock : 0;
+            if (stockNecesario[itemId] > stockDisponible) {
+                throw new Error(`Stock insuficiente para "${itemEnInventario.descripcion}". Necesitas ${stockNecesario[itemId]}, pero solo hay ${stockDisponible} disponibles.`);
+            }
+        }
+
+        // 3. SI HAY STOCK, PROCEDER A CONSTRUIR LA REMISIÓN
+        for (const itemRow of itemRows) {
+            const itemId = itemRow.querySelector('.item-id-hidden').value;
+            const itemSeleccionado = allItems.find(i => i.id === itemId);
+            const valorPorLaminaConIVA = unformatCurrency(itemRow.querySelector('.item-valor-lamina').value);
+
+            if (isNaN(valorPorLaminaConIVA) || valorPorLaminaConIVA <= 0) {
+                 if(itemId) throw new Error(`Debes ingresar un valor válido para el ítem: ${itemSeleccionado.descripcion}.`);
+                 else continue;
+            }
+            
+            const valorPorLaminaBase = incluyeIVA ? valorPorLaminaConIVA / 1.19 : valorPorLaminaConIVA;
+            const tipoCorte = itemRow.querySelector('.tipo-corte-radio:checked').value;
+
+            if (tipoCorte === 'completa') {
+                const cantidad = parseInt(itemRow.querySelector('.item-cantidad-completa').value) || 0;
+                if (cantidad > 0) {
+                    itemsParaGuardar.push({ itemId, descripcion: itemSeleccionado.descripcion, tipo: 'Completa', cantidad, valorUnitario: valorPorLaminaBase, valorTotal: valorPorLaminaBase * cantidad });
+                    stockUpdates[itemId] = (stockUpdates[itemId] || 0) + cantidad;
+                }
+            } else {
+                const cortes = Array.from(itemRow.querySelectorAll('.cut-row')).map(row => ({
+                    ancho: parseInt(row.querySelector('.cut-ancho').value) || 0,
+                    alto: parseInt(row.querySelector('.cut-alto').value) || 0,
+                    cantidad: parseInt(row.querySelector('.cut-cantidad').value) || 1
+                })).filter(c => c.ancho > 0 && c.alto > 0);
+
+                if (cortes.length > 0) {
+                    const estrategiaSeleccionada = itemRow.querySelector('.estrategia-radio:checked').value;
+                    const resultadoDespiece = await optimizarCortes(itemSeleccionado.ancho, itemSeleccionado.alto, cortes, estrategiaSeleccionada);
                     const laminasNecesarias = resultadoDespiece.numeroLaminas;
                     
-                    itemsParaGuardar.push({
-                        itemId,
-                        descripcion: itemSeleccionado.descripcion,
-                        tipo: 'Cortada',
-                        cantidad: laminasNecesarias,
-                        valorUnitario: valorLaminaBase,
-                        valorTotal: valorLaminaBase * laminasNecesarias,
-                        cortes,
-                        planoDespiece: resultadoDespiece.plano,
-                        metricasDespiece: resultadoDespiece.metricas
-                    });
-
+                    itemsParaGuardar.push({ itemId, descripcion: itemSeleccionado.descripcion, tipo: 'Cortada', cantidad: laminasNecesarias, valorUnitario: valorPorLaminaBase, valorTotal: valorPorLaminaBase * laminasNecesarias, cortes, planoDespiece: resultadoDespiece.plano });
                     stockUpdates[itemId] = (stockUpdates[itemId] || 0) + laminasNecesarias;
                     
-                    // --- CORRECCIÓN CLAVE ---
-                    // Se accede a resultadoDespiece.plano en lugar de un objeto indefinido
-                    if (resultadoDespiece.plano) {
-                        resultadoDespiece.plano.forEach((lamina, index) => {
-                            const numCortes = lamina.cortes.length;
-                            const cargoNominal = calcularCargoPorLamina(numCortes);
-
-                            if (cargoNominal > 0) {
-                                const cargoBase = incluyeIVA ? cargoNominal / 1.19 : cargoNominal;
-                                cargosAdicionales.push({
-                                    descripcion: `Corte (${numCortes} pzs) - Lám. ${index + 1} de ${itemSeleccionado.descripcion}`,
-                                    valorUnitario: cargoBase,
-                                    valorTotal: cargoBase
-                                });
-                            }
-                        });
-                    }
+                    resultadoDespiece.plano.forEach(lamina => {
+                        const cortesEnEstaLamina = lamina.cortes.length;
+                        const cargo = calcularCostoDeCortes(cortesEnEstaLamina);
+                        if (cargo.costo > 0) {
+                            const valorCargoBase = (incluyeIVA && cargo.ivaIncluido) ? cargo.costo / 1.19 : cargo.costo;
+                            cargosAdicionales.push({ descripcion: `${cargo.descripcion} (Lámina ${lamina.numero})`, valorUnitario: valorCargoBase, valorTotal: valorCargoBase });
+                        }
+                    });
                 }
             }
         }
         
-        if (itemsParaGuardar.length === 0) throw new Error("No has añadido ítems válidos.");
+        if (itemsParaGuardar.length === 0) throw new Error("No has añadido ítems válidos a la remisión.");
         
+        // 4. Calcular totales y guardar en Firestore
         const subtotalItems = itemsParaGuardar.reduce((sum, item) => sum + item.valorTotal, 0);
         const subtotalCargos = cargosAdicionales.reduce((sum, cargo) => sum + cargo.valorTotal, 0);
         const subtotalGeneral = subtotalItems + subtotalCargos;
@@ -2732,9 +3031,6 @@ async function handleRemisionSubmit(e) {
             const itemActual = allItems.find(i => i.id === itemId);
             if (itemActual) {
                 const nuevoStock = (itemActual.stock || 0) - cantidadADescontar;
-                if (nuevoStock < 0) {
-                    throw new Error(`Stock insuficiente para el ítem: ${itemActual.descripcion}. Stock actual: ${itemActual.stock}, se necesitan: ${cantidadADescontar}.`);
-                }
                 batch.update(itemRef, { stock: nuevoStock });
             }
         }
@@ -2743,7 +3039,7 @@ async function handleRemisionSubmit(e) {
 
         e.target.reset();
         document.getElementById('items-container').innerHTML = '';
-        await calcularTotales();
+        calcularTotales();
         hideModal();
         showTemporaryMessage("¡Remisión guardada con éxito!", "success");
 
@@ -3169,95 +3465,72 @@ function createCutElement() {
 }
 
 /**
- * --- VERSIÓN CORREGIDA PARA WEB WORKER ---
- * Calcula los totales en tiempo real, manejando correctamente la respuesta
- * asíncrona del Web Worker.
+ * Calcula los totales del formulario de remisión para la vista previa.
+ * Llama a la función 'calcularCostoDeCortes' para incluir los cargos adicionales.
  */
-async function calcularTotales() {
-    let subtotalMaterialesGeneral = 0;
-    let subtotalCortesGeneral = 0;
-    const itemRows = document.querySelectorAll('.item-row');
-    const incluyeIVA = document.getElementById('incluir-iva')?.checked || false;
-    const kerf = 3;
+function calcularTotales() {
+    const ivaCheckbox = document.getElementById('incluir-iva');
+    const subtotalEl = document.getElementById('subtotal');
+    const valorIvaEl = document.getElementById('valor-iva');
+    const valorTotalEl = document.getElementById('valor-total');
+    if (!subtotalEl) return; // Salida segura si el formulario no está visible
 
-    const saveButton = document.querySelector('button[type="submit"]');
-    if (saveButton) {
-        saveButton.disabled = true;
-        saveButton.textContent = 'Calculando...';
-    }
+    let subtotalItems = 0;
+    let subtotalCargos = 0;
+    const incluyeIVA = ivaCheckbox.checked;
 
-    for (const itemRow of document.querySelectorAll('.item-row')) {
-        const itemId = itemRow.querySelector('.item-id-hidden')?.value;
-        const itemSeleccionado = allItems.find(i => i.id === itemId);
-        if (!itemSeleccionado) continue;
-
-        const precioInput = unformatCurrency(itemRow.querySelector('.item-valor-lamina')?.value || '0');
-        const valorLaminaBase = (incluyeIVA && precioInput > 0) ? precioInput / 1.19 : precioInput;
-        const tipoCorte = itemRow.querySelector('.tipo-corte-radio:checked')?.value;
-        
-        let subtotalMaterialBaseParaLaFila = 0;
-        let subtotalCortesBaseParaLaFila = 0;
+    document.querySelectorAll('.item-row').forEach(itemRow => {
+        const valorPorLaminaConIVA = unformatCurrency(itemRow.querySelector('.item-valor-lamina').value);
+        const valorPorLaminaBase = incluyeIVA ? valorPorLaminaConIVA / 1.19 : valorPorLaminaConIVA;
+        const tipoCorte = itemRow.querySelector('.tipo-corte-radio:checked').value;
 
         if (tipoCorte === 'completa') {
-            const cantidad = parseInt(itemRow.querySelector('.item-cantidad-completa')?.value || '0', 10);
-            subtotalMaterialBaseParaLaFila = cantidad * valorLaminaBase;
-        } else if (tipoCorte === 'cortada') {
-            const cortes = Array.from(itemRow.querySelectorAll('.cut-row')).map(row => ({
-                ancho: parseInt(row.querySelector('.cut-ancho')?.value || '0', 10),
-                alto: parseInt(row.querySelector('.cut-alto')?.value || '0', 10),
-                cantidad: parseInt(row.querySelector('.cut-cantidad')?.value || '1', 10)
-            })).filter(c => c.ancho > 0 && c.alto > 0);
+            const cantidad = parseInt(itemRow.querySelector('.item-cantidad-completa').value) || 0;
+            subtotalItems += cantidad * valorPorLaminaBase;
+        } else { // 'cortada'
+            // Para la UI, estimamos el costo de al menos una lámina
+            subtotalItems += valorPorLaminaBase * 1;
 
-            if (cortes.length > 0) {
-                try {
-                    const resultadoDespiece = await optimizarCortesExhaustivo(itemSeleccionado.ancho, itemSeleccionado.alto, cortes, kerf);
-                    subtotalMaterialBaseParaLaFila = resultadoDespiece.numeroLaminas * valorLaminaBase;
-                    
-                    // --- CORRECCIÓN CLAVE ---
-                    // Se accede a resultadoDespiece.plano en lugar de un objeto indefinido
-                    if (resultadoDespiece.plano) {
-                        resultadoDespiece.plano.forEach(lamina => {
-                            const cargoNominal = calcularCargoPorLamina(lamina.cortes.length);
-                            if (cargoNominal > 0) {
-                                const cargoBase = incluyeIVA ? cargoNominal / 1.19 : cargoNominal;
-                                subtotalCortesBaseParaLaFila += cargoBase;
-                            }
-                        });
-                    }
-                } catch (error) {
-                    console.error("Error en la optimización durante el cálculo de totales:", error);
-                    // Opcional: mostrar un mensaje de error al usuario
-                }
+            const totalCortes = Array.from(itemRow.querySelectorAll('.cut-row')).reduce((sum, cutRow) => {
+                return sum + (parseInt(cutRow.querySelector('.cut-cantidad').value) || 0);
+            }, 0);
+
+            const cargo = calcularCostoDeCortes(totalCortes);
+            if (cargo.costo > 0) {
+                const valorCargoBase = (incluyeIVA && cargo.ivaIncluido) ? cargo.costo / 1.19 : cargo.costo;
+                subtotalCargos += valorCargoBase;
             }
         }
-        
-        subtotalMaterialesGeneral += subtotalMaterialBaseParaLaFila;
-        subtotalCortesGeneral += subtotalCortesBaseParaLaFila;
+    });
 
-        const subtotalFilaBase = subtotalMaterialBaseParaLaFila + subtotalCortesBaseParaLaFila;
-        const subtotalFilaFinal = incluyeIVA ? subtotalFilaBase * 1.19 : subtotalFilaBase;
-        const subtotalItemElem = itemRow.querySelector('.item-subtotal');
-        if (subtotalItemElem) {
-            subtotalItemElem.textContent = formatCurrency(Math.round(subtotalFilaFinal));
-        }
+    const subtotalGeneral = subtotalItems + subtotalCargos;
+    const valorIVA = incluyeIVA ? subtotalGeneral * 0.19 : 0;
+    const total = subtotalGeneral + valorIVA;
+
+    subtotalEl.textContent = formatCurrency(Math.round(subtotalGeneral));
+    valorIvaEl.textContent = formatCurrency(Math.round(valorIVA));
+    valorTotalEl.textContent = formatCurrency(Math.round(total));
+
+    return { subtotalGeneral, valorIVA, total };
+}
+
+
+/**
+ * --- FUNCIÓN RESTAURADA ---
+ * Calcula el costo adicional por los cortes basándose en las reglas de negocio.
+ * @param {number} totalCortes - El número total de cortes individuales a realizar.
+ * @returns {{costo: number, descripcion: string, ivaIncluido: boolean}} El costo y la descripción del cargo.
+ */
+function calcularCostoDeCortes(totalCortes) {
+    if (totalCortes <= 3) {
+        return { costo: 0, descripcion: "Hasta 3 cortes sin costo", ivaIncluido: false };
     }
-
-    const subtotalGeneralBase = subtotalMaterialesGeneral + subtotalCortesGeneral;
-    const valorIVA = incluyeIVA ? subtotalGeneralBase * 0.19 : 0;
-    const totalFinal = subtotalGeneralBase + valorIVA;
-
-    const subtotalElem = document.getElementById('subtotal');
-    const ivaElem = document.getElementById('valor-iva');
-    const totalElem = document.getElementById('valor-total');
-
-    if (subtotalElem) subtotalElem.textContent = formatCurrency(Math.round(subtotalGeneralBase));
-    if (ivaElem) ivaElem.textContent = formatCurrency(Math.round(valorIVA));
-    if (totalElem) totalElem.textContent = formatCurrency(Math.round(totalFinal));
-    
-    if (saveButton) {
-        saveButton.disabled = false;
-        saveButton.textContent = 'Guardar Remisión';
+    if (totalCortes <= 10) {
+        // El valor de 15.000 ya incluye el IVA
+        return { costo: 15000, descripcion: `Cargo por ${totalCortes} cortes`, ivaIncluido: true };
     }
+    // El valor de 20.000 ya incluye el IVA
+    return { costo: 20000, descripcion: `Cargo especial por ${totalCortes} cortes`, ivaIncluido: true };
 }
 
 function showEditClientModal(client) { const modalContentWrapper = document.getElementById('modal-content-wrapper'); modalContentWrapper.innerHTML = `<div class="bg-white rounded-lg p-6 shadow-xl max-w-sm w-full mx-auto text-center"><h2 class="text-xl font-semibold mb-4">Editar Cliente</h2><form id="edit-client-form" class="space-y-4 text-left"><input type="hidden" id="edit-client-id" value="${client.id}"><div><label for="edit-client-name" class="block text-sm font-medium text-gray-700">Nombre</label><input type="text" id="edit-client-name" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${client.nombre}" required></div><div><label for="edit-client-email" class="block text-sm font-medium text-gray-700">Correo</label><input type="email" id="edit-client-email" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${client.email}" required></div><div><label for="edit-client-phone1" class="block text-sm font-medium text-gray-700">Teléfono 1</label><input type="tel" id="edit-client-phone1" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${client.telefono1 || ''}" required></div><div><label for="edit-client-phone2" class="block text-sm font-medium text-gray-700">Teléfono 2</label><input type="tel" id="edit-client-phone2" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${client.telefono2 || ''}"></div><div><label for="edit-client-nit" class="block text-sm font-medium text-gray-700">NIT</label><input type="text" id="edit-client-nit" class="w-full p-2 border border-gray-300 rounded-lg mt-1" value="${client.nit || ''}"></div><div class="flex gap-4 justify-end pt-4"><button type="button" id="cancel-edit-btn" class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-semibold">Cancelar</button><button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-semibold">Guardar Cambios</button></div></form></div>`; document.getElementById('modal').classList.remove('hidden'); document.getElementById('cancel-edit-btn').addEventListener('click', hideModal); document.getElementById('edit-client-form').addEventListener('submit', async (e) => { e.preventDefault(); const clientId = document.getElementById('edit-client-id').value; const updatedData = { nombre: document.getElementById('edit-client-name').value, email: document.getElementById('edit-client-email').value, telefono1: document.getElementById('edit-client-phone1').value, telefono2: document.getElementById('edit-client-phone2').value, nit: document.getElementById('edit-client-nit').value, }; showModalMessage("Actualizando cliente...", true); try { await updateDoc(doc(db, "clientes", clientId), updatedData); hideModal(); showModalMessage("¡Cliente actualizado!", false, 2000); } catch (error) { console.error("Error al actualizar cliente:", error); showModalMessage("Error al actualizar."); } }); }
@@ -3818,6 +4091,28 @@ function hideModal() {
         modal.classList.add('hidden');
     }
 }
+
+function loadScript(url) {
+    return new Promise((resolve, reject) => {
+        console.log(`[DEBUG] Intentando cargar script: ${url}`);
+        if (document.querySelector(`script[src="${url}"]`)) {
+            console.log("[DEBUG] El script ya existe en el DOM.");
+            return resolve();
+        }
+        const script = document.createElement('script');
+        script.src = url;
+        script.onload = () => {
+            console.log("[DEBUG] ¡Script cargado exitosamente!");
+            resolve();
+        };
+        script.onerror = () => {
+            console.error(`[DEBUG] ERROR: No se pudo cargar el script: ${url}`);
+            reject(new Error(`No se pudo cargar el script: ${url}`));
+        };
+        document.head.appendChild(script);
+    });
+}
+
 function formatCurrency(value) { return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(value); }
 function populateDateFilters(prefix) {
     const monthSelect = document.getElementById(`${prefix}-month`);
@@ -3848,6 +4143,9 @@ function unformatCurrency(value) {
     if (typeof value !== 'string') return parseFloat(value) || 0;
     return parseFloat(value.replace(/[^0-9]/g, '')) || 0;
 }
+
+
+
 function formatCurrencyInput(inputElement) {
     const value = unformatCurrency(inputElement.value);
     inputElement.value = value > 0 ? formatCurrency(value) : '';
@@ -5636,3 +5934,4 @@ async function handleUpdateFacturaPdf(importacionId, gastoTipo, facturaId) {
         showModalMessage(`Error al guardar PDF: ${error.message}`);
     }
 }
+
