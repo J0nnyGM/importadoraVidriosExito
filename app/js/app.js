@@ -147,19 +147,19 @@ function startApp() {
     if (isAppInitialized) return;
 
     console.log("Iniciando la aplicación principal...");
-    
+
     // 1. Ajustar la visibilidad de la UI según los permisos del usuario.
     updateUIVisibility(currentUserData);
-    
+
     // 2. Ahora que el HTML de las vistas existe, podemos asignar los listeners.
     setupEventListeners();
-    
+
     // 3. Cargar todos los datos de la base de datos.
     loadAllData();
-    
+
     // 4. Inicializar los campos de búsqueda.
     setupSearchInputs();
-    
+
     isAppInitialized = true;
     console.log("Aplicación inicializada correctamente.");
 }
@@ -2492,28 +2492,53 @@ function leerDocumentosDelForm(importacionActual) {
     return documentosData;
 }
 
+/**
+ * Optimización 2D con MaxRects + Beam Search (backtracking limitado) + búsqueda binaria en k.
+ * - Lámina NO se rota por defecto (allowSheetRotation=false)
+ * - Piezas SÍ se rotan por defecto (allowPieceRotation=true)
+ * - kerf y margin opcionales
+ *
+ * @param {number} sheetW
+ * @param {number} sheetH
+ * @param {Array<{ancho:number,alto:number,cantidad:number}>} cortes
+ * @param {Object} [opts]
+ *   @param {number}  [opts.maxTimeMs=60000]
+ *   @param {number}  [opts.kerf=0]
+ *   @param {number}  [opts.margin=0]
+ *   @param {boolean} [opts.debug=false]
+ *   @param {number}  [opts.maxRestarts=6]        // para greedy/restats
+ *   @param {boolean} [opts.allowSheetRotation=false]
+ *   @param {boolean} [opts.allowPieceRotation=true]
+ *   @param {number}  [opts.beamCandidates=5]     // nº de colocaciones candidatas por pieza a explorar
+ * @returns {{numeroLaminas:number, plano:Array<{numero:number,cortes:Array<{id,ancho,alto,x,y,descripcion}>}>}}
+ */
 function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
-  // ===== Opciones =====
-  const MAX_TIME_MS  = opts.maxTimeMs ?? 60000;
-  const KERF         = Math.max(0, opts.kerf ?? 0);
-  const MARGIN       = Math.max(0, opts.margin ?? 0);
-  const DEBUG        = !!opts.debug;
-  const MAX_RESTARTS = Math.max(1, opts.maxRestarts ?? 10);
+  // === Opciones ===
+  const MAX_TIME_MS          = opts.maxTimeMs ?? 60000;
+  const KERF                 = Math.max(0, opts.kerf ?? 0);
+  const MARGIN               = Math.max(0, opts.margin ?? 0);
+  const DEBUG                = !!opts.debug;
+  const MAX_RESTARTS         = Math.max(1, opts.maxRestarts ?? 6);
+  const ALLOW_SHEET_ROTATION = opts.allowSheetRotation ?? false;
+  const ALLOW_PIECE_ROTATION = opts.allowPieceRotation ?? true;
+  const BEAM_CANDIDATES      = Math.max(2, opts.beamCandidates ?? 5);
 
   const t0 = Date.now();
   const timeLeft = () => (Date.now() - t0) < MAX_TIME_MS;
 
-  // ===== Clase MaxRects (definida ANTES de usarla) =====
+  // === Utils ===
+  const comparePlacement = (a, b) => (a.primary !== b.primary) ? (a.primary - b.primary) : ((a.secondary ?? 0) - (b.secondary ?? 0));
+  const areaOfFree = (bin) => bin.freeRects.reduce((s,r)=> s + r.w*r.h, 0);
+
+  // === Clase MaxRects ===
   class MaxRectsBin {
     constructor(width, height, kerf = 0) {
       this.binW = width;
       this.binH = height;
       this.kerf = kerf;
-      this.freeRects = [{ x: 0, y: 0, w: width, h: height }];
+      this.freeRects = [{ x:0, y:0, w:width, h:height }];
       this.usedRects = [];
     }
-
-    // Heurística: BAF (area), BSSF (short side), BL (bottom-left)
     scoreFor(node, fr, heuristic) {
       switch (heuristic) {
         case 'BSSF': {
@@ -2533,59 +2558,56 @@ function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
         }
       }
     }
-
-    findPositionForNewNode(w, h, allowRotate, heuristic) {
-      let bestNode = null;
-      let bestScore = { primary: Infinity, secondary: Infinity };
-
-      const tryRect = (rw, rh) => {
+    // Devuelve hasta topN posiciones candidatas (con o sin rotación)
+    findTopPositions(w, h, allowRotate, heuristic, topN = 3) {
+      const cands = [];
+      const tryRect = (rw, rh, rot) => {
         for (const fr of this.freeRects) {
           if (rw <= fr.w && rh <= fr.h) {
             const node = { x: fr.x, y: fr.y, w: rw, h: rh };
             const score = this.scoreFor(node, fr, heuristic);
-            if (comparePlacement(score, bestScore) < 0) {
-              bestScore = score; bestNode = node;
-            }
+            cands.push({ node, score, rot });
           }
         }
       };
+      tryRect(w, h, false);
+      if (allowRotate && w !== h) tryRect(h, w, true);
 
-      tryRect(w, h);
-      if (allowRotate && w !== h) tryRect(h, w);
-
-      return bestNode ? { node: bestNode, score: bestScore } : null;
+      // ordenar por score (mejor primero) y tiebreak bottom-left
+      cands.sort((a,b)=>{
+        const c = comparePlacement(a.score, b.score);
+        if (c !== 0) return c;
+        if (a.node.y !== b.node.y) return a.node.y - b.node.y;
+        return a.node.x - b.node.x;
+      });
+      return cands.slice(0, topN);
     }
-
     placeRect(node) {
-      // Split + prune según MaxRects (con kerf)
       const newFree = [];
-      for (let i = 0; i < this.freeRects.length; i++) {
+      for (let i=0;i<this.freeRects.length;i++) {
         const fr = this.freeRects[i];
-        if (!intersects(fr, node)) {
-          newFree.push(fr);
-          continue;
-        }
-        // Arriba
+        if (!intersects(fr, node)) { newFree.push(fr); continue; }
+        // arriba
         if (node.y > fr.y) {
           const h = Math.max(0, node.y - fr.y - this.kerf);
-          if (h > 0) newFree.push({ x: fr.x, y: fr.y, w: fr.w, h });
+          if (h > 0) newFree.push({ x:fr.x, y:fr.y, w:fr.w, h });
         }
-        // Abajo
+        // abajo
         if (node.y + node.h < fr.y + fr.h) {
           const y = node.y + node.h + this.kerf;
           const h = Math.max(0, (fr.y + fr.h) - (node.y + node.h) - this.kerf);
-          if (h > 0) newFree.push({ x: fr.x, y, w: fr.w, h });
+          if (h > 0) newFree.push({ x:fr.x, y, w:fr.w, h });
         }
-        // Izquierda
+        // izquierda
         if (node.x > fr.x) {
           const w = Math.max(0, node.x - fr.x - this.kerf);
-          if (w > 0) newFree.push({ x: fr.x, y: fr.y, w, h: fr.h });
+          if (w > 0) newFree.push({ x:fr.x, y:fr.y, w, h:fr.h });
         }
-        // Derecha
+        // derecha
         if (node.x + node.w < fr.x + fr.w) {
           const x = node.x + node.w + this.kerf;
           const w = Math.max(0, (fr.x + fr.w) - (node.x + node.w) - this.kerf);
-          if (w > 0) newFree.push({ x, y: fr.y, w, h: fr.h });
+          if (w > 0) newFree.push({ x, y:fr.y, w, h:fr.h });
         }
       }
       this.freeRects = pruneFree(newFree);
@@ -2598,12 +2620,11 @@ function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
         return B.x >= A.x && B.y >= A.y && B.x + B.w <= A.x + A.w && B.y + B.h <= A.y + A.h;
       }
       function pruneFree(list) {
-        // fusiona/limpia rect libres contenidos
         const out = [];
-        for (let i = 0; i < list.length; i++) {
+        for (let i=0;i<list.length;i++) {
           let contained = false;
-          for (let j = 0; j < list.length; j++) {
-            if (i !== j && contains(list[j], list[i])) { contained = true; break; }
+          for (let j=0;j<list.length;j++) {
+            if (i!==j && contains(list[j], list[i])) { contained = true; break; }
           }
           if (!contained && list[i].w > 0 && list[i].h > 0) out.push(list[i]);
         }
@@ -2612,37 +2633,38 @@ function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
     }
   }
 
-  function comparePlacement(a, b) {
-    if (a.primary !== b.primary) return a.primary - b.primary;
-    return (a.secondary ?? 0) - (b.secondary ?? 0);
+  // === Aplanar piezas ===
+  let piezas = []; let id = 1;
+  for (const c of cortes) for (let i=0;i<c.cantidad;i++) {
+    piezas.push({ id:id++, w:c.ancho, h:c.alto, w0:c.ancho, h0:c.alto, area:c.ancho*c.alto });
   }
 
-  // ===== Aplanar piezas =====
-  let piezas = []; let id = 1;
-  for (const c of cortes) {
-    for (let i = 0; i < c.cantidad; i++) {
-      piezas.push({ id: id++, w: c.ancho, h: c.alto, w0: c.ancho, h0: c.alto, area: c.ancho * c.alto });
+  // === Validación (cabida con políticas de rotación) ===
+  const innerW = sheetW - 2*MARGIN, innerH = sheetH - 2*MARGIN;
+  const innerWrot = sheetH - 2*MARGIN, innerHrot = sheetW - 2*MARGIN; // por si se permitiera rotar lámina
+  const fitsPieceIn = (p, W, H) => (p.w<=W && p.h<=H) || (ALLOW_PIECE_ROTATION && p.h<=W && p.w<=H);
+  for (const p of piezas) {
+    const okNormal = fitsPieceIn(p, innerW, innerH);
+    const okRotLam = ALLOW_SHEET_ROTATION ? fitsPieceIn(p, innerWrot, innerHrot) : false;
+    if (!okNormal && !okRotLam) {
+      throw new Error(`La pieza ${p.w}x${p.h} no cabe en la lámina ${sheetW}x${sheetH} (margen ${MARGIN}).`);
     }
   }
 
-  // ===== Validación: deben caber dentro del área útil =====
-  const innerW = sheetW - 2 * MARGIN;
-  const innerH = sheetH - 2 * MARGIN;
-  for (const p of piezas) {
-    const fits = (p.w <= innerW && p.h <= innerH) || (p.h <= innerW && p.w <= innerH);
-    if (!fits) throw new Error(`La pieza ${p.w}x${p.h} no cabe en la lámina ${sheetW}x${sheetH} con margen ${MARGIN}.`);
-  }
-
-  // ===== Cotas por área =====
-  const totalArea = piezas.reduce((s, p) => s + p.area, 0);
+  // === Cotas por área ===
+  const totalArea = piezas.reduce((s,p)=>s+p.area,0);
   const sheetAreaNet = Math.max(0, innerW) * Math.max(0, innerH);
   const lowerBound = Math.max(1, Math.ceil(totalArea / sheetAreaNet));
 
-  // Cota superior rápida (greedy multi-bin)
-  const upperGreedy = packMultiBinMaxRects(piezas, sheetW, sheetH, { kerf: KERF, margin: MARGIN, heuristic: 'BAF' }).count;
+  // === Greedy multi-bin (cota superior rápida) ===
+  const upperGreedy = packMultiBinMaxRects(piezas, sheetW, sheetH, {
+    kerf: KERF, margin: MARGIN, heuristic: 'BAF',
+    allowRotate: ALLOW_PIECE_ROTATION
+  }).count;
+
   if (DEBUG) console.log(`LB=${lowerBound}, UB=${upperGreedy}, piezas=${piezas.length}`);
 
-  // ===== Búsqueda binaria en k =====
+  // === Búsqueda binaria en k ===
   let bestPlan = null;
   let lo = lowerBound, hi = upperGreedy;
 
@@ -2651,90 +2673,203 @@ function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
     if (DEBUG) console.log(`Probar k=${mid}`);
 
     const attempt = tryPackAtMostK(piezas, sheetW, sheetH, mid, {
-      kerf: KERF, margin: MARGIN, maxRestarts: MAX_RESTARTS, debug: DEBUG, timeLeft
+      kerf: KERF, margin: MARGIN, maxRestarts: MAX_RESTARTS, debug: DEBUG,
+      timeLeft, allowPieceRotate: ALLOW_PIECE_ROTATION, allowSheetRotate: ALLOW_SHEET_ROTATION,
+      beamCandidates: BEAM_CANDIDATES
     });
 
     if (attempt && attempt.count <= mid) {
-      bestPlan = attempt;      // factible → intenta bajar
-      hi = attempt.count - 1;
+      bestPlan = attempt; hi = attempt.count - 1; // bajar
     } else {
-      lo = mid + 1;            // no factible → sube
+      lo = mid + 1; // subir
     }
   }
 
   if (!bestPlan) {
-    // salvavidas si se agotó tiempo
-    bestPlan = packMultiBinMaxRects(piezas, sheetW, sheetH, { kerf: KERF, margin: MARGIN, heuristic: 'BAF' });
+    // Salvavidas si no alcanzó el tiempo
+    bestPlan = packMultiBinMaxRects(piezas, sheetW, sheetH, {
+      kerf: KERF, margin: MARGIN, heuristic: 'BAF',
+      allowRotate: ALLOW_PIECE_ROTATION
+    });
   }
 
-  // ===== Salida =====
-  const plano = bestPlan.sheets.map((bin, i) => ({
-    numero: i + 1,
-    cortes: bin.placed.map(r => ({
-      id: r.id,
-      ancho: r.w,
-      alto: r.h,
-      x: r.x,
-      y: r.y,
+  // === Salida ===
+  const plano = bestPlan.sheets.map((bin, i)=>({
+    numero: i+1,
+    cortes: bin.placed.map(r=>({
+      id: r.id, ancho: r.w, alto: r.h, x: r.x, y: r.y,
       descripcion: `${r.w0}x${r.h0}${r.rot ? ' (R)' : ''}`
     }))
   }));
   return { numeroLaminas: bestPlan.count, plano };
 
-  // ======== Helpers de empaquetado multi-bin (MaxRects) ========
+  // ================== Core de empaquetado ==================
+
+  // 1) Intento “completo”: Beam Search sobre MaxRects (para k fijo)
   function tryPackAtMostK(pieces, W, H, K, params) {
-    const orients = [
-      { name: 'Normal', W, H },
-      { name: 'Rotada', W: H, H: W }
-    ];
-    const heuristics = ['BAF', 'BSSF', 'BL'];
+    const orients = (params.allowSheetRotate ? [{name:'Normal',W,H},{name:'Rotada',W:H,H:W}] : [{name:'Normal',W,H}]);
+    const heuristics = ['BAF','BSSF','BL'];
+
     let best = null;
 
     for (const o of orients) {
       for (const h of heuristics) {
         if (!params.timeLeft()) break;
 
+        // Beam search con distintos órdenes de piezas
         const orders = [
-          (a, b) => b.area - a.area,
-          (a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h),
-          (a, b) => b.h - a.h,
-          (a, b) => b.w - a.w
+          (a,b)=> b.area - a.area,
+          (a,b)=> Math.max(b.w,b.h) - Math.max(a.w,a.h),
+          (a,b)=> b.h - a.h,
+          (a,b)=> b.w - a.w
         ];
-        for (let r = 0; r < Math.min(orders.length, params.maxRestarts); r++) {
+
+        for (let r=0; r<Math.min(orders.length, params.maxRestarts); r++) {
           if (!params.timeLeft()) break;
+
           const sorted = pieces.slice().sort(orders[r]);
-          const res = packMultiBinMaxRects(sorted, o.W, o.H, { kerf: params.kerf, margin: params.margin, heuristic: h, maxBins: K });
-          if (!best || res.count < best.count || (res.count === best.count && res.waste < best.waste)) {
-            best = { ...res, tag: `${o.name}|${h}|r${r}` };
+          const res = packWithBeam(sorted, o.W, o.H, K, {
+            kerf: params.kerf, margin: params.margin, heuristic: h,
+            allowRotate: params.allowPieceRotate, beam: params.beamCandidates, timeLeft: params.timeLeft
+          });
+
+          // si beam no encontró, probamos greedy como respaldo en esta combinación
+          const fallback = (!res || res.count === Infinity)
+            ? packMultiBinMaxRects(sorted, o.W, o.H, { kerf: params.kerf, margin: params.margin, heuristic: h, maxBins: K, allowRotate: params.allowPieceRotate })
+            : res;
+
+          if (!best || fallback.count < best.count || (fallback.count === best.count && fallback.waste < best.waste)) {
+            best = { ...fallback, tag: `${o.name}|${h}|r${r}` };
           }
-          if (best.count <= K) return best;
+          if (best.count <= K) return best; // alcanzamos objetivo
         }
       }
     }
     return best;
   }
 
-  function packMultiBinMaxRects(pieces, W, H, { kerf = 0, margin = 0, heuristic = 'BAF', maxBins = Infinity } = {}) {
+  // 2) Beam Search sobre MaxRects (profundidad = nº piezas, branching limitado)
+  function packWithBeam(piecesSorted, W, H, K, {kerf, margin, heuristic, allowRotate, beam, timeLeft}) {
+    const sheetArea = Math.max(0, (W - 2*margin) * (H - 2*margin));
+    const totalArea = piecesSorted.reduce((s,p)=>s+p.area,0);
+
+    const bins = [];             // MaxRectsBin[]
+    const placedSheets = [];     // {placed:[]}
+
+    function dfs(idx, remainingArea) {
+      if (!timeLeft()) return null;
+      if (idx >= piecesSorted.length) {
+        // construir plan
+        const planSheets = placedSheets.map(b=>({ placed: b.placed.slice() }));
+        return { count: planSheets.length, sheets: planSheets, waste: calcWaste(planSheets, W, H, margin) };
+      }
+
+      // cota por capacidad: área libre + bins restantes
+      const freeAreaNow = bins.reduce((s,b)=> s + areaOfFree(b), 0);
+      const capacity = freeAreaNow + (K - bins.length) * sheetArea;
+      if (capacity < remainingArea) return null;
+
+      const p = piecesSorted[idx];
+
+      // candidatos: topN en cada bin existente + posible bin nuevo
+      let candidates = [];
+
+      for (let bi=0; bi<bins.length; bi++) {
+        const tops = bins[bi].findTopPositions(p.w, p.h, allowRotate, heuristic, Math.min(2, beam)); // 2 por bin
+        for (const t of tops) candidates.push({ binIndex: bi, node: t.node, score: t.score, rot: t.rot, newBin: false });
+      }
+
+      if (bins.length < K) {
+        // simulación en bin nuevo
+        const temp = new MaxRectsBin(W - 2*margin, H - 2*margin, kerf);
+        const tops = temp.findTopPositions(p.w, p.h, allowRotate, heuristic, beam);
+        for (const t of tops) candidates.push({ binIndex: bins.length, node: t.node, score: t.score, rot: t.rot, newBin: true });
+      }
+
+      if (candidates.length === 0) return null;
+
+      // ordenar candidatos por score y preferir colocar en bins existentes primero (para no abrir bin si no hace falta)
+      candidates.sort((a,b)=>{
+        const c = comparePlacement(a.score, b.score);
+        if (c !== 0) return c;
+        if (a.newBin !== b.newBin) return (a.newBin ? 1 : -1);
+        if (a.node.y !== b.node.y) return a.node.y - b.node.y;
+        return a.node.x - b.node.x;
+      });
+
+      const take = Math.min(beam, candidates.length);
+      for (let ci=0; ci<take; ci++) {
+        const cand = candidates[ci];
+
+        // preparar bin
+        let bin;
+        let created = false;
+        if (cand.newBin) {
+          bin = new MaxRectsBin(W - 2*margin, H - 2*margin, kerf);
+          bins.push(bin);
+          placedSheets.push({ placed: [] });
+          created = true;
+        } else {
+          bin = bins[cand.binIndex];
+        }
+
+        // snapshot para rollback
+        const savedFree = bin.freeRects.map(r=>({...r}));
+        const savedUsed = bin.usedRects.slice();
+
+        // colocar
+        bin.placeRect(cand.node);
+        const sheetIdx = created ? (bins.length - 1) : cand.binIndex;
+        placedSheets[sheetIdx].placed.push({
+          id: p.id,
+          x: cand.node.x + margin,
+          y: cand.node.y + margin,
+          w: cand.node.w,
+          h: cand.node.h,
+          w0: p.w0,
+          h0: p.h0,
+          rot: (cand.node.w === p.h && cand.node.h === p.w)
+        });
+
+        const res = dfs(idx + 1, remainingArea - p.area);
+        if (res && res.count <= K) return res;
+
+        // rollback
+        placedSheets[sheetIdx].placed.pop();
+        bin.freeRects = savedFree;
+        bin.usedRects = savedUsed;
+        if (created) { bins.pop(); placedSheets.pop(); }
+      }
+      return null;
+    }
+
+    const out = dfs(0, totalArea);
+    return out ?? { count: Infinity, sheets: [], waste: Infinity };
+  }
+
+  // 3) Greedy Multi-bin MaxRects (respaldo/upper bound)
+  function packMultiBinMaxRects(pieces, W, H, { kerf=0, margin=0, heuristic='BAF', maxBins=Infinity, allowRotate=true } = {}) {
     const bins = [];
-    let remaining = pieces.map(p => ({ ...p }));
+    let remaining = pieces.map(p => ({...p}));
 
     while (remaining.length) {
       if (bins.length >= maxBins) break;
 
-      const bin = new MaxRectsBin(W - 2 * margin, H - 2 * margin, kerf);
+      const bin = new MaxRectsBin(W - 2*margin, H - 2*margin, kerf);
       const placed = [];
       let progress = true;
 
       while (progress && remaining.length) {
         progress = false;
 
-        let best = null, bestIdx = -1, bestNode = null;
-        for (let i = 0; i < remaining.length; i++) {
+        let best = null, bestIdx = -1, bestNode = null, bestRot = false;
+        for (let i=0;i<remaining.length;i++) {
           const p = remaining[i];
-          const cand = bin.findPositionForNewNode(p.w, p.h, true, heuristic);
-          if (cand) {
+          const tops = bin.findTopPositions(p.w, p.h, allowRotate, heuristic, 1); // solo el mejor
+          if (tops.length) {
+            const cand = tops[0];
             if (!best || comparePlacement(cand.score, best.score) < 0) {
-              best = cand; bestIdx = i; bestNode = cand.node;
+              best = cand; bestIdx = i; bestNode = cand.node; bestRot = cand.rot;
             }
           }
         }
@@ -2750,9 +2885,9 @@ function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
             h: bestNode.h,
             w0: original.w0,
             h0: original.h0,
-            rot: (bestNode.w === original.h && bestNode.h === original.w)
+            rot: bestRot
           });
-          remaining.splice(bestIdx, 1);
+          remaining.splice(bestIdx,1);
           progress = true;
         }
       }
@@ -2763,13 +2898,15 @@ function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
       }
     }
 
-    if (remaining.length) {
-      return { count: Infinity, sheets: bins, waste: Infinity };
-    }
+    if (remaining.length) return { count: Infinity, sheets: bins, waste: Infinity };
 
-    const areaNet = (W - 2 * margin) * (H - 2 * margin);
-    const waste = bins.reduce((t, b) => t + (areaNet - b.placed.reduce((s, r) => s + r.w * r.h, 0)), 0);
+    const waste = calcWaste(bins, W, H, margin);
     return { count: bins.length, sheets: bins, waste };
+  }
+
+  function calcWaste(bins, W, H, margin) {
+    const areaNet = (W - 2*margin) * (H - 2*margin);
+    return bins.reduce((t,b)=> t + (areaNet - b.placed.reduce((s,r)=> s + r.w*r.h, 0)), 0);
   }
 }
 
@@ -2946,10 +3083,10 @@ async function handleRemisionSubmit(e) {
             const valorPorLaminaConIVA = unformatCurrency(itemRow.querySelector('.item-valor-lamina').value);
 
             if (isNaN(valorPorLaminaConIVA) || valorPorLaminaConIVA <= 0) {
-                 if(itemId) throw new Error(`Debes ingresar un valor válido para el ítem: ${itemSeleccionado.descripcion}.`);
-                 else continue;
+                if (itemId) throw new Error(`Debes ingresar un valor válido para el ítem: ${itemSeleccionado.descripcion}.`);
+                else continue;
             }
-            
+
             const valorPorLaminaBase = incluyeIVA ? valorPorLaminaConIVA / 1.19 : valorPorLaminaConIVA;
             const tipoCorte = itemRow.querySelector('.tipo-corte-radio:checked').value;
 
@@ -2970,10 +3107,10 @@ async function handleRemisionSubmit(e) {
                     const estrategiaSeleccionada = itemRow.querySelector('.estrategia-radio:checked').value;
                     const resultadoDespiece = await optimizarCortes(itemSeleccionado.ancho, itemSeleccionado.alto, cortes, estrategiaSeleccionada);
                     const laminasNecesarias = resultadoDespiece.numeroLaminas;
-                    
+
                     itemsParaGuardar.push({ itemId, descripcion: itemSeleccionado.descripcion, tipo: 'Cortada', cantidad: laminasNecesarias, valorUnitario: valorPorLaminaBase, valorTotal: valorPorLaminaBase * laminasNecesarias, cortes, planoDespiece: resultadoDespiece.plano });
                     stockUpdates[itemId] = (stockUpdates[itemId] || 0) + laminasNecesarias;
-                    
+
                     resultadoDespiece.plano.forEach(lamina => {
                         const cortesEnEstaLamina = lamina.cortes.length;
                         const cargo = calcularCostoDeCortes(cortesEnEstaLamina);
@@ -2985,9 +3122,9 @@ async function handleRemisionSubmit(e) {
                 }
             }
         }
-        
+
         if (itemsParaGuardar.length === 0) throw new Error("No has añadido ítems válidos a la remisión.");
-        
+
         // 4. Calcular totales y guardar en Firestore
         const subtotalItems = itemsParaGuardar.reduce((sum, item) => sum + item.valorTotal, 0);
         const subtotalCargos = cargosAdicionales.reduce((sum, cargo) => sum + cargo.valorTotal, 0);
@@ -3034,7 +3171,7 @@ async function handleRemisionSubmit(e) {
                 batch.update(itemRef, { stock: nuevoStock });
             }
         }
-        
+
         await batch.commit();
 
         e.target.reset();
