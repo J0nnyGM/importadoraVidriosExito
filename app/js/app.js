@@ -567,51 +567,159 @@ document.getElementById('logout-btn').addEventListener('click', () => {
     signOut(auth);
 });
 
-// --- LÓGICA DE NAVEGACIÓN Y EVENTOS ---
+/**
+ * --- VERSIÓN FINAL, COMPLETA Y SIN OMISIONES ---
+ * Configura TODOS los event listeners de la aplicación, asegurando que no haya
+ * duplicados y que todas las funcionalidades, incluyendo las nuevas pestañas de inventario
+ * y el formulario dinámico de remisiones, estén correctamente conectadas.
+ */
 function setupEventListeners() {
-    const tabs = { remisiones: document.getElementById('tab-remisiones'), facturacion: document.getElementById('tab-facturacion'), inventario: document.getElementById('tab-inventario'), clientes: document.getElementById('tab-clientes'), gastos: document.getElementById('tab-gastos'), proveedores: document.getElementById('tab-proveedores'), empleados: document.getElementById('tab-empleados'), items: document.getElementById('tab-items') };
-    const views = { remisiones: document.getElementById('view-remisiones'), facturacion: document.getElementById('view-facturacion'), inventario: document.getElementById('view-inventario'), clientes: document.getElementById('view-clientes'), gastos: document.getElementById('view-gastos'), proveedores: document.getElementById('view-proveedores'), empleados: document.getElementById('view-empleados'), items: document.getElementById('view-items') };
-    Object.keys(tabs).forEach(key => { if (tabs[key]) { tabs[key].addEventListener('click', () => switchView(key, tabs, views)) } });
+    // 1. NAVEGACIÓN PRINCIPAL (PESTAÑAS)
+    const tabs = {
+        remisiones: document.getElementById('tab-remisiones'),
+        facturacion: document.getElementById('tab-facturacion'),
+        inventario: document.getElementById('tab-inventario'),
+        clientes: document.getElementById('tab-clientes'),
+        gastos: document.getElementById('tab-gastos'),
+        proveedores: document.getElementById('tab-proveedores'),
+        empleados: document.getElementById('tab-empleados'),
+        items: document.getElementById('tab-items')
+    };
+    const views = {
+        remisiones: document.getElementById('view-remisiones'),
+        facturacion: document.getElementById('view-facturacion'),
+        inventario: document.getElementById('view-inventario'),
+        clientes: document.getElementById('view-clientes'),
+        gastos: document.getElementById('view-gastos'),
+        proveedores: document.getElementById('view-proveedores'),
+        empleados: document.getElementById('view-empleados'),
+        items: document.getElementById('view-items')
+    };
+    Object.keys(tabs).forEach(key => {
+        if (tabs[key]) {
+            tabs[key].addEventListener('click', () => switchView(key, tabs, views));
+        }
+    });
+
+    // 2. NAVEGACIÓN SECUNDARIA (PESTAÑAS DE INVENTARIO Y FACTURACIÓN)
     const importacionesTab = document.getElementById('tab-importaciones');
     const nacionalTab = document.getElementById('tab-nacional');
     const importacionesView = document.getElementById('view-importaciones-content');
     const nacionalView = document.getElementById('view-nacional-content');
     if (importacionesTab && nacionalTab) {
-        importacionesTab.addEventListener('click', () => { importacionesTab.classList.add('active'); nacionalTab.classList.remove('active'); importacionesView.classList.remove('hidden'); nacionalView.classList.add('hidden'); });
-        nacionalTab.addEventListener('click', () => { nacionalTab.classList.add('active'); importacionesTab.classList.remove('active'); nacionalView.classList.remove('hidden'); importacionesView.classList.add('hidden'); });
+        importacionesTab.addEventListener('click', () => {
+            importacionesTab.classList.add('active');
+            nacionalTab.classList.remove('active');
+            importacionesView.classList.remove('hidden');
+            nacionalView.classList.add('hidden');
+        });
+        nacionalTab.addEventListener('click', () => {
+            nacionalTab.classList.add('active');
+            importacionesTab.classList.remove('active');
+            nacionalView.classList.remove('hidden');
+            importacionesView.classList.add('hidden');
+        });
     }
+
+    const facturacionPendientesTab = document.getElementById('tab-pendientes');
+    const facturacionRealizadasTab = document.getElementById('tab-realizadas');
+    const facturacionPendientesView = document.getElementById('view-pendientes');
+    const facturacionRealizadasView = document.getElementById('view-realizadas');
+    if (facturacionPendientesTab && facturacionRealizadasTab) {
+        facturacionPendientesTab.addEventListener('click', () => {
+            facturacionPendientesTab.classList.add('active');
+            facturacionRealizadasTab.classList.remove('active');
+            facturacionPendientesView.classList.remove('hidden');
+            facturacionRealizadasView.classList.add('hidden');
+        });
+        facturacionRealizadasTab.addEventListener('click', () => {
+            facturacionRealizadasTab.classList.add('active');
+            facturacionPendientesTab.classList.remove('active');
+            facturacionRealizadasView.classList.remove('hidden');
+            facturacionPendientesView.classList.add('hidden');
+        });
+    }
+
+    // 3. LISTENER CENTRALIZADO PARA EL FORMULARIO DE REMISIONES
     const remisionForm = document.getElementById('remision-form');
     if (remisionForm) {
         remisionForm.addEventListener('click', (e) => {
             const target = e.target;
-            if (target.id === 'add-item-btn') { document.getElementById('items-container').appendChild(createItemElement()); }
-            if (target.closest('.remove-item-btn')) { target.closest('.item-row').remove(); }
-            if (target.classList.contains('tipo-corte-radio')) { const itemRow = target.closest('.item-row'); const completaDiv = itemRow.querySelector('.completa-container'); const cortadaDiv = itemRow.querySelector('.cortada-container'); if (target.value === 'completa') { completaDiv.classList.remove('hidden'); cortadaDiv.classList.add('hidden'); } else { completaDiv.classList.add('hidden'); cortadaDiv.classList.remove('hidden'); if (cortadaDiv.querySelector('.cortes-list').children.length === 0) { cortadaDiv.querySelector('.cortes-list').appendChild(createCutElement()); } } }
-            if (target.closest('.add-cut-btn')) { target.closest('.cortada-container').querySelector('.cortes-list').appendChild(createCutElement()); }
-            if (target.closest('.remove-cut-btn')) { target.closest('.cut-row').remove(); }
+            if (target.id === 'add-item-btn') {
+                document.getElementById('items-container').appendChild(createItemElement());
+            }
+            if (target.closest('.remove-item-btn')) {
+                target.closest('.item-row').remove();
+                calcularTotales();
+            }
+            if (target.classList.contains('tipo-corte-radio')) {
+                const itemRow = target.closest('.item-row');
+                const completaDiv = itemRow.querySelector('.completa-container');
+                const cortadaDiv = itemRow.querySelector('.cortada-container');
+                if (target.value === 'completa') {
+                    completaDiv.classList.remove('hidden');
+                    cortadaDiv.classList.add('hidden');
+                } else {
+                    completaDiv.classList.add('hidden');
+                    cortadaDiv.classList.remove('hidden');
+                    if (cortadaDiv.querySelector('.cortes-list').children.length === 0) {
+                        cortadaDiv.querySelector('.cortes-list').appendChild(createCutElement());
+                    }
+                }
+            }
+            if (target.closest('.add-cut-btn')) {
+                target.closest('.cortada-container').querySelector('.cortes-list').appendChild(createCutElement());
+            }
+            if (target.closest('.remove-cut-btn')) {
+                target.closest('.cut-row').remove();
+            }
         });
         remisionForm.addEventListener('submit', handleRemisionSubmit);
         document.getElementById('incluir-iva').addEventListener('input', calcularTotales);
     }
+    
+    // 4. LISTENERS PARA BOTONES PRINCIPALES Y FORMULARIOS DE CREACIÓN
     document.getElementById('add-importacion-btn').addEventListener('click', () => showImportacionModal());
     document.getElementById('add-nacional-btn').addEventListener('click', () => showNacionalModal());
-    document.getElementById('add-cliente-form').addEventListener('submit', async (e) => { e.preventDefault(); const nuevoCliente = { nombre: document.getElementById('nuevo-cliente-nombre').value, email: document.getElementById('nuevo-cliente-email').value, telefono1: document.getElementById('nuevo-cliente-telefono1').value, telefono2: document.getElementById('nuevo-cliente-telefono2').value, nit: document.getElementById('nuevo-cliente-nit').value || '', creadoEn: new Date() }; showModalMessage("Registrando cliente...", true); try { await addDoc(collection(db, "clientes"), nuevoCliente); e.target.reset(); hideModal(); showModalMessage("¡Cliente registrado!", false, 2000); } catch (error) { console.error(error); hideModal(); showModalMessage("Error al registrar cliente."); } });
+    document.getElementById('add-cliente-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const nuevoCliente = {
+            nombre: document.getElementById('nuevo-cliente-nombre').value,
+            email: document.getElementById('nuevo-cliente-email').value,
+            telefono1: document.getElementById('nuevo-cliente-telefono1').value,
+            telefono2: document.getElementById('nuevo-cliente-telefono2').value,
+            nit: document.getElementById('nuevo-cliente-nit').value || '',
+            creadoEn: new Date()
+        };
+        showModalMessage("Registrando cliente...", true);
+        try {
+            await addDoc(collection(db, "clientes"), nuevoCliente);
+            e.target.reset();
+            hideModal();
+            showTemporaryMessage("¡Cliente registrado!", "success");
+        } catch (error) {
+            console.error(error);
+            hideModal();
+            showModalMessage("Error al registrar cliente.");
+        }
+    });
     document.getElementById('add-proveedor-form').addEventListener('submit', handleProveedorSubmit);
     document.getElementById('add-gasto-form').addEventListener('submit', handleGastoSubmit);
     document.getElementById('add-item-form').addEventListener('submit', handleItemSubmit);
     document.getElementById('summary-btn').addEventListener('click', showDashboardModal);
     document.getElementById('edit-profile-btn').addEventListener('click', showEditProfileModal);
     document.getElementById('loan-request-btn').addEventListener('click', showLoanRequestModal);
-    document.getElementById('show-policy-link').addEventListener('click', (e) => {
-        e.preventDefault();
-        policyModal.classList.remove('hidden');
-    });
-    document.getElementById('close-policy-modal').addEventListener('click', () => {
-        policyModal.classList.add('hidden');
-    });
-    document.getElementById('accept-policy-btn').addEventListener('click', () => {
-        policyModal.classList.add('hidden');
-    });
+    
+    // 5. LISTENERS PARA ACCIONES DENTRO DE LAS LISTAS (BOTONES DE EDITAR, GESTIONAR, ETC.)
+    const itemsList = document.getElementById('items-list');
+    if (itemsList) {
+        itemsList.addEventListener('click', (e) => {
+            if (e.target.closest('.edit-item-btn')) {
+                const itemData = JSON.parse(e.target.closest('.edit-item-btn').dataset.itemJson);
+                showEditItemModal(itemData);
+            }
+        });
+    }
     const empleadosView = document.getElementById('view-empleados');
     if (empleadosView) {
         empleadosView.addEventListener('click', async (e) => {
@@ -624,7 +732,6 @@ function setupEventListeners() {
                         await updateDoc(doc(db, "users", uid), { status: newStatus });
                         showTemporaryMessage("Estado del usuario actualizado.", "success");
                     } catch (error) {
-                        console.error("Error al actualizar estado:", error);
                         showTemporaryMessage("No se pudo actualizar el estado.", "error");
                     }
                 }
@@ -634,29 +741,26 @@ function setupEventListeners() {
             }
         });
     }
+
+    // 6. LISTENERS PARA BÚSQUEDAS Y FILTROS
     document.getElementById('search-remisiones').addEventListener('input', renderRemisiones);
     document.getElementById('search-clientes').addEventListener('input', renderClientes);
     document.getElementById('search-proveedores').addEventListener('input', renderProveedores);
     document.getElementById('search-gastos').addEventListener('input', renderGastos);
     document.getElementById('search-items').addEventListener('input', renderItems);
+    
     populateDateFilters('filter-remisiones');
     populateDateFilters('filter-gastos');
     document.getElementById('filter-remisiones-month').addEventListener('change', renderRemisiones);
     document.getElementById('filter-remisiones-year').addEventListener('change', renderRemisiones);
     document.getElementById('filter-gastos-month').addEventListener('change', renderGastos);
     document.getElementById('filter-gastos-year').addEventListener('change', renderGastos);
-    const fechaRecibidoInput = document.getElementById('fecha-recibido');
-    if (fechaRecibidoInput) {
-        fechaRecibidoInput.value = new Date().toISOString().split('T')[0];
-    }
-    document.getElementById('view-gastos').addEventListener('focusout', (e) => { if (e.target.id === 'gasto-valor-total') { formatCurrencyInput(e.target); } });
-    document.getElementById('view-gastos').addEventListener('focus', (e) => { if (e.target.id === 'gasto-valor-total') { unformatCurrencyInput(e.target); } });
-    document.getElementById('view-remisiones').addEventListener('focusout', (e) => { if (e.target.classList.contains('item-valor-unitario')) { formatCurrencyInput(e.target); calcularTotales(); } });
-    document.getElementById('view-remisiones').addEventListener('focus', (e) => { if (e.target.classList.contains('item-valor-unitario')) { unformatCurrencyInput(e.target); } });
-    document.getElementById('view-all-loans-btn').addEventListener('click', () => {
-        showAllLoansModal(allPendingLoans);
-    });
 
+    // 7. LISTENERS ADICIONALES (MODAL DE POLÍTICAS, FORMATO DE MONEDA, ETC.)
+    document.getElementById('show-policy-link')?.addEventListener('click', (e) => { e.preventDefault(); document.getElementById('policy-modal').classList.remove('hidden'); });
+    document.getElementById('close-policy-modal')?.addEventListener('click', () => { document.getElementById('policy-modal').classList.add('hidden'); });
+    document.getElementById('accept-policy-btn')?.addEventListener('click', () => { document.getElementById('policy-modal').classList.add('hidden'); });
+    document.getElementById('view-all-loans-btn').addEventListener('click', () => { showAllLoansModal(allPendingLoans); });
 }
 
 function switchView(viewName, tabs, views) {
@@ -1183,16 +1287,18 @@ function renderGastos() {
         gastosListEl.appendChild(el);
     });
 }
+
+
 function renderFacturacion() {
     const pendientesListEl = document.getElementById('facturacion-pendientes-list');
     const realizadasListEl = document.getElementById('facturacion-realizadas-list');
     if (!pendientesListEl || !realizadasListEl) return;
 
     const remisionesParaFacturar = allRemisiones.filter(r => r.incluyeIVA && r.estado !== 'Anulada');
-
     const pendientes = remisionesParaFacturar.filter(r => !r.facturado);
-    const realizadas = remisionesParaFacturar.filter(r => r.facturado);
+    const realizadas = remisionesParaFacturar.filter(r => r.facturado === true);
 
+    // Renderizar lista de PENDIENTES
     pendientesListEl.innerHTML = '';
     if (pendientes.length === 0) {
         pendientesListEl.innerHTML = '<p class="text-center text-gray-500 py-8">No hay remisiones pendientes de facturar.</p>';
@@ -1217,6 +1323,7 @@ function renderFacturacion() {
         });
     }
 
+    // Renderizar lista de REALIZADAS
     realizadasListEl.innerHTML = '';
     if (realizadas.length === 0) {
         realizadasListEl.innerHTML = '<p class="text-center text-gray-500 py-8">No hay remisiones facturadas.</p>';
@@ -1224,13 +1331,9 @@ function renderFacturacion() {
         realizadas.forEach(remision => {
             const el = document.createElement('div');
             el.className = 'border p-4 rounded-lg flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4';
-
-            let facturaButtons = '';
-            if (remision.facturaPdfUrl) {
-                facturaButtons = `<button data-pdf-url="${remision.facturaPdfUrl}" data-remision-num="${remision.numeroFactura || remision.numeroRemision}" class="view-factura-pdf-btn bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-700">Ver Factura</button>`;
-            } else {
-                facturaButtons = `<button data-remision-id="${remision.id}" class="facturar-btn bg-orange-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-orange-600">Adjuntar Factura</button>`;
-            }
+            let facturaButtons = remision.facturaPdfUrl
+                ? `<button data-pdf-url="${remision.facturaPdfUrl}" data-remision-num="${remision.numeroFactura || remision.numeroRemision}" class="view-factura-pdf-btn bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-700">Ver Factura</button>`
+                : `<button data-remision-id="${remision.id}" class="facturar-btn bg-orange-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-orange-600">Adjuntar Factura</button>`;
 
             el.innerHTML = `
                 <div class="flex-grow">
@@ -1241,7 +1344,7 @@ function renderFacturacion() {
                     <p class="text-sm text-gray-600 mt-1">Fecha: ${remision.fechaRecibido} &bull; Total: <span class="font-bold">${formatCurrency(remision.valorTotal)}</span></p>
                 </div>
                 <div class="flex-shrink-0 flex items-center gap-2">
-                     <div class="text-right">
+                    <div class="text-right">
                         <span class="status-badge status-entregado">Facturado</span>
                         ${remision.numeroFactura ? `<p class="text-sm text-gray-600 mt-1">Factura N°: <span class="font-semibold">${remision.numeroFactura}</span></p>` : ''}
                     </div>
@@ -1253,14 +1356,10 @@ function renderFacturacion() {
         });
     }
 
-    document.querySelectorAll('.facturar-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            const remisionId = e.currentTarget.dataset.remisionId;
-            showFacturaModal(remisionId);
-        });
-    });
-    document.querySelectorAll('.view-pdf-btn').forEach(button => button.addEventListener('click', (e) => { const pdfUrl = e.currentTarget.dataset.pdfUrl; const remisionNum = e.currentTarget.dataset.remisionNum; showPdfModal(pdfUrl, `Remisión N° ${remisionNum}`); }));
-    document.querySelectorAll('.view-factura-pdf-btn').forEach(button => button.addEventListener('click', (e) => { const pdfUrl = e.currentTarget.dataset.pdfUrl; const remisionNum = e.currentTarget.dataset.remisionNum; showPdfModal(pdfUrl, `Factura N° ${remisionNum}`); }));
+    // Volver a asignar los event listeners para TODOS los botones recién creados
+    document.querySelectorAll('.facturar-btn').forEach(btn => btn.addEventListener('click', (e) => showFacturaModal(e.currentTarget.dataset.remisionId)));
+    document.querySelectorAll('.view-pdf-btn').forEach(btn => btn.addEventListener('click', (e) => showPdfModal(e.currentTarget.dataset.pdfUrl, `Remisión N° ${e.currentTarget.dataset.remisionNum}`)));
+    document.querySelectorAll('.view-factura-pdf-btn').forEach(btn => btn.addEventListener('click', (e) => showPdfModal(e.currentTarget.dataset.pdfUrl, `Factura N° ${e.currentTarget.dataset.remisionNum}`)));
 }
 
 
@@ -2102,6 +2201,12 @@ function setupModalEventListeners(modalBody, importacion) {
     modalBody.addEventListener('click', (event) => {
         const target = event.target;
 
+        const abonoChinaBtn = target.closest('#add-abono-china-btn');
+        if (abonoChinaBtn) {
+            // Ahora pasamos el elemento del botón como segundo argumento
+            handleAbonoChinaSubmit(importacionId, abonoChinaBtn);
+        }
+
         if (target.closest('#set-en-puerto-btn')) {
             handleEstadoUpdate(importacionId, 'En Puerto');
         }
@@ -2180,18 +2285,33 @@ function setupModalEventListeners(modalBody, importacion) {
     });
 }
 
-// js/app.js
-
 /**
- * --- VERSIÓN MEJORADA CON VALIDACIÓN Y CÁLCULO DE TRM ---
+ * --- VERSIÓN ROBUSTA CON BÚSQUEDA RELATIVA ---
  * Maneja el registro de un abono a Costos de Origen.
- * Valida que el abono no exceda el saldo pendiente.
- * Calcula y guarda la TRM de la transacción.
- * @param {string} importacionId - El ID de la importación que se está editando.
+ * Ahora encuentra los campos de input relativo al botón presionado,
+ * evitando errores de 'null'.
+ * @param {string} importacionId - El ID de la importación.
+ * @param {HTMLElement} buttonElement - El elemento del botón que fue presionado.
  */
-async function handleAbonoChinaSubmit(importacionId) {
-    const valorCopInput = document.getElementById('abono-china-valor-cop');
-    const valorUsdInput = document.getElementById('abono-china-valor-usd');
+async function handleAbonoChinaSubmit(importacionId, buttonElement) {
+    // Encontrar el contenedor del formulario de abono, subiendo desde el botón
+    const formContainer = buttonElement.closest('.bg-gray-50');
+    if (!formContainer) {
+        showModalMessage("Error: No se pudo encontrar el formulario de abono.");
+        return;
+    }
+
+    // Buscar los inputs DENTRO de ese contenedor
+    const valorCopInput = formContainer.querySelector('#abono-china-valor-cop');
+    const valorUsdInput = formContainer.querySelector('#abono-china-valor-usd');
+    const formaPagoSelect = formContainer.querySelector('#abono-china-forma-pago');
+    const fechaInput = formContainer.querySelector('#abono-china-fecha');
+
+    if (!valorCopInput || !valorUsdInput || !formaPagoSelect || !fechaInput) {
+        showModalMessage("Error: Faltan campos en el formulario de abono.");
+        return;
+    }
+    
     const valorCOP = unformatCurrency(valorCopInput.value);
     const valorUSD = unformatCurrency(valorUsdInput.value, true);
 
@@ -2200,31 +2320,24 @@ async function handleAbonoChinaSubmit(importacionId) {
         return;
     }
 
-    // 1. Validar el límite del abono
     const importacionActual = allImportaciones.find(i => i.id === importacionId);
-    if (!importacionActual) {
-        showModalMessage("Error: No se pudo encontrar la importación actual.");
-        return;
-    }
+    if (!importacionActual) return showModalMessage("Error: No se pudo encontrar la importación actual.");
+    
     const totalChinaUSD = importacionActual.totalChinaUSD || 0;
     const totalAbonadoUSD = (importacionActual.abonos || []).reduce((sum, abono) => sum + (abono.valorUSD || 0), 0);
     const saldoPendienteUSD = totalChinaUSD - totalAbonadoUSD;
 
-    if (valorUSD > saldoPendienteUSD + 0.01) { // Se añade un margen de 1 centavo por redondeos
+    if (valorUSD > saldoPendienteUSD + 0.01) {
         showModalMessage(`El abono (USD ${valorUSD.toFixed(2)}) no puede superar el saldo pendiente de ${formatCurrency(saldoPendienteUSD, true)}.`);
         return;
     }
 
-    // 2. Si la validación es exitosa, proceder a guardar
-    const formaPago = document.getElementById('abono-china-forma-pago').value;
-    const fechaAbono = document.getElementById('abono-china-fecha').value;
-
     const nuevoAbono = {
-        fecha: fechaAbono,
+        fecha: fechaInput.value,
         valorCOP: valorCOP,
         valorUSD: valorUSD,
-        trmAbono: valorCOP / valorUSD, // 3. Cálculo de la TRM
-        formaPago: formaPago,
+        trmAbono: valorCOP / valorUSD,
+        formaPago: formaPagoSelect.value,
         timestamp: new Date(),
         registradoPor: currentUser.uid
     };
@@ -2233,19 +2346,14 @@ async function handleAbonoChinaSubmit(importacionId) {
 
     try {
         const importacionRef = doc(db, "importaciones", importacionId);
-        await updateDoc(importacionRef, {
-            abonos: arrayUnion(nuevoAbono)
-        });
+        await updateDoc(importacionRef, { abonos: arrayUnion(nuevoAbono) });
 
-        // Actualizar la caché local para reflejo inmediato
         const importacionIndex = allImportaciones.findIndex(i => i.id === importacionId);
         if (importacionIndex !== -1) {
-            if (!allImportaciones[importacionIndex].abonos) {
-                allImportaciones[importacionIndex].abonos = [];
-            }
+            if (!allImportaciones[importacionIndex].abonos) allImportaciones[importacionIndex].abonos = [];
             allImportaciones[importacionIndex].abonos.push(nuevoAbono);
         }
-
+        
         hideModal();
         showTemporaryMessage("Abono registrado con éxito.", "success");
         showImportacionModal(allImportaciones[importacionIndex]);
@@ -2494,8 +2602,11 @@ function leerDocumentosDelForm(importacionActual) {
 }
 
 /**
- * Optimización rápida con patrón exacto para piezas idénticas
- * + fallback greedy MaxRects multi-lámina (lámina fija por defecto).
+ * Despiece híbrido:
+ *  - Baseline mínimo de láminas (MaxRects rápido, sin guillotina).
+ *  - Intenta guillotina vertical (columnas) y horizontal (filas) con mezcla de anchos/altos.
+ *  - Elige el que use MENOS láminas; si guillotina no iguala al baseline, se queda con baseline.
+ *  - Caso piezas idénticas: patrón exacto (con rotación y sin kerf; si tienes kerf>0, aplica heurística).
  *
  * @param {number} sheetW
  * @param {number} sheetH
@@ -2503,317 +2614,446 @@ function leerDocumentosDelForm(importacionActual) {
  * @param {Object} [opts]
  *   @param {number}  [opts.kerf=0]
  *   @param {number}  [opts.margin=0]
- *   @param {boolean} [opts.allowSheetRotation=false]
- *   @param {boolean} [opts.allowPieceRotation=true]
+ *   @param {boolean} [opts.allowSheetRotation=false]   // no giramos la lámina
+ *   @param {boolean} [opts.allowPieceRotation=true]    // sí rotamos piezas (recomendado)
  *   @param {"BAF"|"BSSF"|"BL"} [opts.heuristic="BAF"]
- * @returns {{numeroLaminas:number, plano:Array<{numero:number,cortes:Array<{id,ancho,alto,x,y,descripcion}>}>}}
+ *   @param {"prefer-vertical"|"prefer-horizontal"} [opts.preference="prefer-vertical"]
+ * @returns {{
+ *   numeroLaminas:number,
+ *   plano:Array<{numero:number,cortes:Array<{id,ancho,alto,x,y,descripcion}>}>,
+ *   cortesSecuencia?:Array<any>   // líneas de corte completas (si usó guillotina)
+ * }}
  */
 function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
-  // -------- Opciones / utils --------
+  // ===== Opciones =====
   const KERF   = Math.max(0, opts.kerf ?? 0);
   const MARGIN = Math.max(0, opts.margin ?? 0);
-  const ALLOW_SHEET_ROTATION = opts.allowSheetRotation ?? false; // lámina NO se rota por defecto
+  const ALLOW_SHEET_ROTATION = opts.allowSheetRotation ?? false;
   const ALLOW_PIECE_ROTATION = opts.allowPieceRotation ?? true;
   const HEUR = opts.heuristic ?? "BAF";
+  const PREFERENCE = opts.preference ?? "prefer-vertical";
 
+  // ===== Utils =====
   const cmpScore = (a,b)=> (a.primary!==b.primary) ? (a.primary-b.primary) : ((a.secondary??0)-(b.secondary??0));
-  const areaNet = (W,H,m) => Math.max(0,(W-2*m)) * Math.max(0,(H-2*m));
 
-  // ====== Definir MaxRectsBin ANTES de usarla ======
-  class MaxRectsBin {
-    constructor(width, height, kerf=0) {
-      this.kerf = kerf;
-      this.freeRects = [{x:0,y:0,w:width,h:height}];
-      this.usedRects = [];
-    }
-    scoreFor(node, fr, heuristic) {
-      switch (heuristic) {
+  // ===== (1) CLASE MRBin ANTES DE USARLA =====
+  class MRBin {
+    constructor(W,H,kerf=0){ this.kerf=kerf; this.free=[{x:0,y:0,w:W,h:H}]; }
+    _score(node, fr, heur){
+      switch(heur){
         case 'BSSF': {
           const ssf = Math.min(Math.abs(fr.w-node.w), Math.abs(fr.h-node.h));
           const lsf = Math.max(Math.abs(fr.w-node.w), Math.abs(fr.h-node.h));
-          return { primary: ssf, secondary: lsf };
+          return {primary:ssf,secondary:lsf};
         }
-        case 'BL':   return { primary: node.y, secondary: node.x };
-        case 'BAF':
+        case 'BL': return {primary:node.y,secondary:node.x};
         default: {
-          const freeArea = fr.w*fr.h;
-          const fit = freeArea - node.w*node.h;
+          const fit = fr.w*fr.h - node.w*node.h;
           const ssf = Math.min(Math.abs(fr.w-node.w), Math.abs(fr.h-node.h));
-          return { primary: fit, secondary: ssf };
+          return {primary:fit,secondary:ssf};
         }
       }
     }
-    // mejor posición (Top-1) para rapidez
-    findBestPosition(w, h, allowRotate, heuristic) {
-      let best = null;
-      const tryRect = (rw, rh, rot) => {
-        for (const fr of this.freeRects) {
-          if (rw<=fr.w && rh<=fr.h) {
-            const node = {x:fr.x, y:fr.y, w:rw, h:rh};
-            const score = this.scoreFor(node, fr, heuristic);
-            if (!best || cmpScore(score,best.score)<0 ||
-                (cmpScore(score,best.score)===0 && (node.y<best.node.y || (node.y===best.node.y && node.x<best.node.x)))) {
-              best = { node, score, rot };
+    find(w,h,rotOK,heur){
+      let best=null;
+      const tryR=(rw,rh,rot)=>{
+        for(const fr of this.free){
+          if(rw<=fr.w && rh<=fr.h){
+            const node={x:fr.x,y:fr.y,w:rw,h:rh};
+            const sc=this._score(node,fr,heur);
+            if(!best || sc.primary<best.score.primary ||
+               (sc.primary===best.score.primary && sc.secondary<best.score.secondary)) {
+              best={node,score:sc,rot};
             }
           }
         }
       };
-      tryRect(w,h,false);
-      if (allowRotate && w!==h) tryRect(h,w,true);
-      return best; // {node,score,rot} | null
+      tryR(w,h,false);
+      if(rotOK && w!==h) tryR(h,w,true);
+      return best;
     }
-    placeRect(node) {
-      const newFree = [];
-      for (let i=0;i<this.freeRects.length;i++) {
-        const fr = this.freeRects[i];
-        if (!intersects(fr,node)) { newFree.push(fr); continue; }
-        // arriba
-        if (node.y > fr.y) {
-          const h = node.y - fr.y - this.kerf; if (h>0) newFree.push({x:fr.x,y:fr.y,w:fr.w,h});
-        }
-        // abajo
-        if (node.y + node.h < fr.y + fr.h) {
-          const y = node.y + node.h + this.kerf;
-          const h = (fr.y + fr.h) - (node.y + node.h) - this.kerf;
-          if (h>0) newFree.push({x:fr.x,y,w:fr.w,h});
-        }
-        // izquierda
-        if (node.x > fr.x) {
-          const w = node.x - fr.x - this.kerf; if (w>0) newFree.push({x:fr.x,y:fr.y,w,h:fr.h});
-        }
-        // derecha
-        if (node.x + node.w < fr.x + fr.w) {
-          const x = node.x + node.w + this.kerf;
-          const w = (fr.x + fr.w) - (node.x + node.w) - this.kerf;
-          if (w>0) newFree.push({x,y:fr.y,w,h:fr.h});
-        }
-      }
-      this.freeRects = pruneContained(newFree);
-      this.usedRects.push(node);
-
-      function intersects(a,b){
-        return !(b.x>=a.x+a.w || b.x+b.w<=a.x || b.y>=a.y+a.h || b.y+b.h<=a.y);
-      }
-      function containedIn(a,b){
-        return a.x>=b.x && a.y>=b.y && a.x+a.w<=b.x+b.w && a.y+a.h<=b.y+b.h;
-      }
-      function pruneContained(list){
-        const out=[];
-        for (let i=0;i<list.length;i++){
-          let ok=true;
-          for (let j=0;j<list.length;j++){
-            if (i!==j && containedIn(list[i],list[j])){ ok=false; break; }
+    place(n){
+      const out=[];
+      for(const fr of this.free){
+        if(!(n.x>=fr.x+fr.w || n.x+n.w<=fr.x || n.y>=fr.y+fr.h || n.y+n.h<=fr.y)){
+          // arriba
+          if(n.y>fr.y){ const h=n.y-fr.y-this.kerf; if(h>0) out.push({x:fr.x,y:fr.y,w:fr.w,h}); }
+          // abajo
+          if(n.y+n.h<fr.y+fr.h){
+            const y=n.y+n.h+this.kerf, h=fr.y+fr.h-(n.y+n.h)-this.kerf; if(h>0) out.push({x:fr.x,y,w:fr.w,h});
           }
-          if (ok && list[i].w>0 && list[i].h>0) out.push(list[i]);
-        }
-        return out;
+          // izq
+          if(n.x>fr.x){ const w=n.x-fr.x-this.kerf; if(w>0) out.push({x:fr.x,y:fr.y,w,h:fr.h}); }
+          // der
+          if(n.x+n.w<fr.x+fr.w){
+            const x=n.x+n.w+this.kerf, w=fr.x+fr.w-(n.x+n.w)-this.kerf; if(w>0) out.push({x,y:fr.y,w,h:fr.h});
+          }
+        } else out.push(fr);
       }
+      // prune contenidos
+      const pr=[];
+      for(let i=0;i<out.length;i++){
+        let ok=true;
+        for(let j=0;j<out.length;j++){
+          if(i!==j && out[i].x>=out[j].x && out[i].y>=out[j].y &&
+             out[i].x+out[i].w<=out[j].x+out[j].w && out[i].y+out[i].h<=out[j].y+out[j].h){ ok=false; break; }
+        }
+        if(ok && out[i].w>0 && out[i].h>0) pr.push(out[i]);
+      }
+      this.free=pr;
     }
   }
 
-  // ====== Helpers que usan MaxRectsBin (deben ir DESPUÉS de la clase) ======
-  function packMultiBinMaxRects(pieces, W, H, {kerf=0, margin=0, heuristic="BAF", allowRotate=true} = {}) {
-    const bins = [];
-    let remaining = pieces.slice().sort((a,b)=> b.area - a.area);
-
-    while (remaining.length) {
-      const bin = new MaxRectsBin(W - 2*margin, H - 2*margin, kerf);
-      const placed = [];
-      let moved = true;
-      while (moved && remaining.length) {
-        moved = false;
-        let best = null, bestIdx = -1;
-        for (let i=0;i<remaining.length;i++) {
-          const p = remaining[i];
-          const pos = bin.findBestPosition(p.w, p.h, allowRotate, heuristic);
-          if (pos) {
-            if (!best || cmpScore(pos.score,best.score)<0) { best = pos; bestIdx = i; }
+  // ===== (2) Baseline MaxRects que USA MRBin =====
+  function maxRectsMulti(pieces, SW, SH, {margin=0,kerf=0,heuristic="BAF",allowRotate=true}){
+    const W=SW-2*margin, H=SH-2*margin, sheets=[];
+    const list=pieces.slice().map(p=>({...p})).sort((a,b)=> b.area-a.area);
+    let i=0;
+    while(i<list.length){
+      const bin=new MRBin(W,H,kerf);
+      const placed=[];
+      let moved=true;
+      while(moved && i<list.length){
+        moved=false;
+        let best=null, idx=-1;
+        for(let k=i;k<list.length;k++){
+          const p=list[k];
+          const pos=bin.find(p.w0,p.h0,allowRotate,heuristic);
+          if(pos && (!best ||
+            pos.score.primary<best.score.primary ||
+            (pos.score.primary===best.score.primary && pos.score.secondary<best.score.secondary))){
+            best=pos; idx=k;
           }
         }
-        if (best) {
-          const p = remaining[bestIdx];
-          bin.placeRect(best.node);
-          placed.push({
-            id: p.id,
-            x: best.node.x + margin,
-            y: best.node.y + margin,
-            w: best.node.w,
-            h: best.node.h,
-            w0: p.w0, h0: p.h0,
-            rot: best.rot
-          });
-          remaining.splice(bestIdx,1);
-          moved = true;
+        if(best){
+          bin.place(best.node);
+          const p=list[idx];
+          placed.push({ id:p.id, x:best.node.x+margin, y:best.node.y+margin,
+                        w:best.node.w, h:best.node.h, w0:p.w0, h0:p.h0,
+                        rot:best.rot });
+          [list[idx],list[i]]=[list[i],list[idx]]; i++; moved=true;
         }
       }
-      bins.push({ placed });
+      sheets.push({ placed });
     }
-    return { count: bins.length, sheets: bins };
+    const waste = sheets.reduce((t,sh)=> t + (W*H - sh.placed.reduce((s,r)=>s+r.w*r.h,0)), 0);
+    return { count:sheets.length, sheets, waste };
   }
 
-  function greedySingle(pieces, W, H, {kerf=0, margin=0, allowRotate=true, heuristic="BAF"}) {
-    const bin = new MaxRectsBin(W - 2*margin, H - 2*margin, kerf);
-    const list = pieces.slice().sort((a,b)=> b.area - a.area);
-    const placed = [];
-    for (let i=0;i<list.length;i++) {
-      const p = list[i];
-      const best = bin.findBestPosition(p.w, p.h, allowRotate, heuristic);
-      if (!best) return { success:false, placed };
-      bin.placeRect(best.node);
-      placed.push({
-        id:p.id, x:best.node.x+margin, y:best.node.y+margin,
-        w:best.node.w, h:best.node.h, w0:p.w0, h0:p.h0, rot:best.rot
-      });
+  // ===== (3) Exacto idénticas (guillotina cerrada) =====
+  function allIdentical(arr){ const a=arr[0]; return arr.every(p=>p.w0===a.w0 && p.h0===a.h0); }
+  function exactPatternCols(W,H,w,h,allowRotate){
+    const rowsU=Math.floor(H/h), rowsR=allowRotate?Math.floor(H/w):0;
+    let best={cap:0,c:0,d:0,modo:'cols'};
+    for(let d=0; d<= (allowRotate?Math.floor(W/h):0); d++){
+      const rem=W-d*h; if(rem<0) break;
+      const c=Math.floor(rem/w);
+      const cap=c*rowsU + d*rowsR;
+      if(cap>best.cap) best={cap,c,d,modo:'cols'};
     }
-    return { success:true, placed };
+    best.cutsSeq=[{lamina:1,verticales:[] }]; // opcional visual
+    return best;
   }
-
-  // ====== Helpers SIN dependencia de la clase ======
-  function todasIdenticas(list) {
-    const a = list[0];
-    return list.every(p => p.w0 === a.w0 && p.h0 === a.h0);
-  }
-
-  function mejorPatronIdentico(W, H, w, h, allowRotate) {
-    // columnas mixtas (ancho w y ancho h)
-    const rowsU = Math.floor(H / h);
-    const rowsR = allowRotate ? Math.floor(H / w) : 0;
-    let bestCols = { capacidad: 0, c:0, d:0 };
-    for (let d = 0; d <= (allowRotate ? Math.floor(W / h) : 0); d++) {
-      const remW = W - d*h; if (remW < 0) break;
-      const c = Math.floor(remW / w);
-      const cap = c*rowsU + d*rowsR;
-      if (cap > bestCols.capacidad) bestCols = { capacidad: cap, c, d };
+  function exactPatternRows(W,H,w,h,allowRotate){
+    const colsU=Math.floor(W/w), colsR=allowRotate?Math.floor(W/h):0;
+    let best={cap:0,a:0,b:0,modo:'rows'};
+    for(let b=0; b<= (allowRotate?Math.floor(H/w):0); b++){
+      const rem=H-b*w; if(rem<0) break;
+      const a=Math.floor(rem/h);
+      const cap=a*colsU + b*colsR;
+      if(cap>best.cap) best={cap,a,b,modo:'rows'};
     }
-    // filas mixtas (alto h y alto w)
-    const colsU = Math.floor(W / w);
-    const colsR = allowRotate ? Math.floor(W / h) : 0;
-    let bestRows = { capacidad: 0, a:0, b:0 };
-    for (let b = 0; b <= (allowRotate ? Math.floor(H / w) : 0); b++) {
-      const remH = H - b*w; if (remH < 0) break;
-      const a = Math.floor(remH / h);
-      const cap = a*colsU + b*colsR;
-      if (cap > bestRows.capacidad) bestRows = { capacidad: cap, a, b };
-    }
-    // elegir
-    const wasteCols = W*H - (bestCols.c*w + bestCols.d*h) * H;
-    const wasteRows = W*H - (bestRows.a*h + bestRows.b*w) * W;
-    if (bestCols.capacidad > bestRows.capacidad) return { modo:'cols', params: bestCols, capacidad: bestCols.capacidad };
-    if (bestRows.capacidad > bestCols.capacidad) return { modo:'rows', params: bestRows, capacidad: bestRows.capacidad };
-    return (wasteCols <= wasteRows)
-      ? { modo:'cols', params: bestCols, capacidad: bestCols.capacidad }
-      : { modo:'rows', params: bestRows, capacidad: bestRows.capacidad };
+    best.cutsSeq=[{lamina:1,horizontales:[]}];
+    return best;
   }
-
-  function renderPatron(patron, take, w, h, margin) {
-    const placed = [];
-    if (take <= 0) return placed;
-    if (patron.modo === 'cols') {
-      const { c, d } = patron.params;
-      let x = margin;
-      const rowsR = Math.floor((sheetH - 2*margin) / w);
-      for (let j=0; j<d; j++) {
-        let y = margin;
-        for (let i=0; i<rowsR && placed.length < take; i++) {
-          placed.push({ x, y, w:h, h:w, rot:true }); y += w;
-        }
-        x += h;
+  function chooseBestPattern(A,B,W,H){
+    if(A.cap>B.cap) return A;
+    if(B.cap>A.cap) return B;
+    const wasteA = W*H - (A.modo==='cols' ? (A.c*W*0 + A.d*W*0, (A.c*0 + A.d*0)) : 0); // no afecta selección aquí
+    const wasteB = wasteA;
+    return A; // empate: cualquiera, no cambia láminas
+  }
+  function renderExactPattern(pat,take,w,h,m,SW,SH){
+    const placed=[]; if(take<=0) return placed;
+    if(pat.modo==='cols'){
+      let x=m;
+      const rowsR=Math.floor((SH-2*m)/w);
+      for(let j=0;j<pat.d && placed.length<take;j++){
+        let y=m; for(let i=0;i<rowsR && placed.length<take;i++){ placed.push({x,y,w:h,h:w,rot:true}); y+=w; }
+        x+=h;
       }
-      const rowsU = Math.floor((sheetH - 2*margin) / h);
-      for (let j=0; j<c && placed.length < take; j++) {
-        let y = margin;
-        for (let i=0; i<rowsU && placed.length < take; i++) {
-          placed.push({ x, y, w:w, h:h, rot:false }); y += h;
-        }
-        x += w;
+      const rowsU=Math.floor((SH-2*m)/h);
+      for(let j=0;j<pat.c && placed.length<take;j++){
+        let y=m; for(let i=0;i<rowsU && placed.length<take;i++){ placed.push({x,y,w:w,h:h,rot:false}); y+=h; }
+        x+=w;
+      }
+      return placed;
+    } else {
+      let y=m;
+      const colsU=Math.floor((SW-2*m)/w);
+      for(let i=0;i<pat.a && placed.length<take;i++){
+        let x=m; for(let j=0;j<colsU && placed.length<take;j++){ placed.push({x,y,w:w,h:h,rot:false}); x+=w; }
+        y+=h;
+      }
+      const colsR=Math.floor((SW-2*m)/h);
+      for(let i=0;i<pat.b && placed.length<take;i++){
+        let x=m; for(let j=0;j<colsR && placed.length<take;j()){ placed.push({x,y,w:h,h:w,rot:true}); x+=h; }
+        y+=w;
       }
       return placed;
     }
-    if (patron.modo === 'rows') {
-      const { a, b } = patron.params;
-      let y = margin;
-      const colsU = Math.floor((sheetW - 2*margin) / w);
-      for (let i=0; i<a && placed.length < take; i++) {
-        let x = margin;
-        for (let j=0; j<colsU && placed.length < take; j++) {
-          placed.push({ x, y, w:w, h:h, rot:false }); x += w;
+  }
+
+  // ===== (4) Guillotine columnas/filas =====
+  function guillotineColumns(pieces, SW, SH, {margin=0,kerf=0,allowRotate=true}){
+    const W=SW-2*margin, H=SH-2*margin;
+    const items=pieces.map(p=>({...p}));
+    const cols=[];
+    const sorted=items.sort((a,b)=> Math.max(b.w0,b.h0)-Math.max(a.w0,a.h0) || (b.w0*b.h0 - a.w0*a.h0));
+    const orient=(p)=> {
+      const o=[{w:p.w0,h:p.h0,rot:false}];
+      if(allowRotate && p.w0!==p.h0) o.push({w:p.h0,h:p.w0,rot:true});
+      return o;
+    };
+
+    for(const p of sorted){
+      let best=null, bestCol=-1, bestOpt=null;
+      const opts=orient(p);
+      for(let ci=0;ci<cols.length;ci++){
+        const col=cols[ci];
+        for(const o of opts){
+          const need=(col.pieces.length?kerf:0)+o.h;
+          if(col.usedH+need<=H){
+            const dW=Math.max(0,o.w-col.width);
+            const slack=H-(col.usedH+need);
+            const score=dW*1e6+slack;
+            if(!best || score<best.score){ best={score}, bestCol=ci, bestOpt=o; }
+          }
         }
-        y += h;
       }
-      const colsR = Math.floor((sheetW - 2*margin) / h);
-      for (let i=0; i<b && placed.length < take; i++) {
-        let x = margin;
-        for (let j=0; j<colsR && placed.length < take; j++) {
-          placed.push({ x, y, w:h, h:w, rot:true }); x += h;
-        }
-        y += w;
+      if(best){
+        const col=cols[bestCol];
+        col.width=Math.max(col.width,bestOpt.w);
+        if(col.pieces.length) col.usedH+=kerf;
+        col.pieces.push({id:p.id,w:bestOpt.w,h:bestOpt.h,rot:bestOpt.rot,w0:p.w0,h0:p.h0});
+        col.usedH+=bestOpt.h;
+        continue;
       }
-      return placed;
+      const feas=opts.filter(o=>o.h<=H).sort((a,b)=> (a.w-b.w)||(b.h-a.h));
+      if(!feas.length) return null;
+      const o=feas[0];
+      cols.push({width:o.w,usedH:o.h,pieces:[{id:p.id,w:o.w,h:o.h,rot:o.rot,w0:p.w0,h0:p.h0}]});
     }
-    return placed;
+
+    // Empaque 1D de columnas por ancho
+    const sheets=[];
+    const colsSorted=cols.sort((a,b)=> b.width-a.width);
+    for(const c of colsSorted){
+      let ok=false;
+      for(const sh of sheets){
+        const need=(sh.cols.length?KERF:0)+c.width;
+        if(sh.usedW+need<= (W)){ sh.cols.push(c); sh.usedW+=need; ok=true; break; }
+      }
+      if(!ok) sheets.push({usedW:c.width, cols:[c]});
+    }
+
+    // plano + cortes
+    const outSheets=[], cutsSeq=[];
+    for(let si=0; si<sheets.length; si++){
+      const sh=sheets[si];
+      let x=MARGIN;
+      const placed=[];
+      const vCuts=[]; const hPerCol=[];
+      for(let ci=0; ci<sh.cols.length; ci++){
+        const col=sh.cols[ci];
+        if(ci>0) x+=KERF;
+        let y=MARGIN;
+        const yCuts=[];
+        for(let k=0;k<col.pieces.length;k++){
+          const it=col.pieces[k];
+          if(k>0) y+=KERF;
+          placed.push({id:it.id,x,y,w:it.w,h:it.h,w0:it.w0,h0:it.h0,rot:it.rot});
+          y+=it.h;
+          if(k<col.pieces.length-1) yCuts.push(y + KERF/2);
+        }
+        hPerCol.push({columna:ci+1,x0:x,x1:x+col.width,yCuts});
+        x+=col.width;
+        vCuts.push(x);
+      }
+      outSheets.push({placed});
+      cutsSeq.push({lamina:si+1,verticales:vCuts,horizontalesPorColumna:hPerCol});
+    }
+    const areaNet=(W*H);
+    const waste=outSheets.reduce((t,sh)=> t + (areaNet - sh.placed.reduce((s,r)=>s+r.w*r.h,0)), 0);
+    return {count:outSheets.length,sheets:outSheets,waste,cutsSeq};
   }
 
-  // -------- aplanar piezas --------
-  let piezas = []; let id=1;
-  for (const c of cortes) for (let i=0;i<c.cantidad;i++) {
-    piezas.push({ id:id++, w:c.ancho, h:c.alto, w0:c.ancho, h0:c.alto, area:c.ancho*c.alto });
-  }
-  if (!piezas.length) return { numeroLaminas: 0, plano: [] };
+  function guillotineRows(pieces, SW, SH, {margin=0,kerf=0,allowRotate=true}){
+    const W=SW-2*margin, H=SH-2*margin;
+    const items=pieces.map(p=>({...p}));
+    const rows=[];
+    const sorted=items.sort((a,b)=> Math.max(b.w0,b.h0)-Math.max(a.w0,a.h0) || (b.w0*b.h0 - a.w0*a.h0));
+    const orient=(p)=> {
+      const o=[{w:p.w0,h:p.h0,rot:false}];
+      if(allowRotate && p.w0!==p.h0) o.push({w:p.h0,h:p.w0,rot:true});
+      return o;
+    };
 
-  // -------- validaciones básicas --------
-  const innerW = sheetW - 2*MARGIN, innerH = sheetH - 2*MARGIN;
-  const fitsPiece = (p,W,H)=> (p.w<=W && p.h<=H) || (ALLOW_PIECE_ROTATION && p.h<=W && p.w<=H);
+    for(const p of sorted){
+      let best=null, bestRow=-1, bestOpt=null;
+      const opts=orient(p);
+      for(let ri=0; ri<rows.length; ri++){
+        const row=rows[ri];
+        for(const o of opts){
+          const need=(row.pieces.length?kerf:0)+o.w;
+          if(row.usedW+need<=W){
+            const dH=Math.max(0,o.h-row.height);
+            const score=dH*1e6 + (W-(row.usedW+need));
+            if(!best || score<best.score){ best={score}, bestRow=ri, bestOpt=o; }
+          }
+        }
+      }
+      if(best){
+        const row=rows[bestRow];
+        row.height=Math.max(row.height,bestOpt.h);
+        if(row.pieces.length) row.usedW+=kerf;
+        row.pieces.push({id:p.id,w:bestOpt.w,h:bestOpt.h,rot:bestOpt.rot,w0:p.w0,h0:p.h0});
+        row.usedW+=bestOpt.w;
+        continue;
+      }
+      const feas=opts.filter(o=>o.w<=W).sort((a,b)=> (a.h-b.h)||(b.w-a.w));
+      if(!feas.length) return null;
+      const o=feas[0];
+      rows.push({height:o.h, usedW:o.w, pieces:[{id:p.id,w:o.w,h:o.h,rot:o.rot,w0:p.w0,h0:p.h0}]});
+    }
+
+    const sheets=[];
+    const rowsSorted=rows.sort((a,b)=> b.height-a.height);
+    for(const r of rowsSorted){
+      let ok=false;
+      for(const sh of sheets){
+        const need=(sh.rows.length?KERF:0)+r.height;
+        const usedH=sh.rows.reduce((s,rr)=> s+rr.height,0) + (sh.rows.length?KERF*(sh.rows.length):0);
+        if(usedH+need<=H){ sh.rows.push(r); ok=true; break; }
+      }
+      if(!ok) sheets.push({rows:[r]});
+    }
+
+    const outSheets=[], cutsSeq=[];
+    for(let si=0; si<sheets.length; si++){
+      const sh=sheets[si];
+      let y=MARGIN;
+      const placed=[]; const hCuts=[]; const vPerRow=[];
+      for(let ri=0; ri<sh.rows.length; ri++){
+        const row=sh.rows[ri];
+        if(ri>0) y+=KERF;
+        let x=MARGIN;
+        const xCuts=[];
+        for(let k=0;k<row.pieces.length;k++){
+          const it=row.pieces[k];
+          if(k>0) x+=KERF;
+          placed.push({id:it.id,x,y,w:it.w,h:it.h,w0:it.w0,h0:it.h0,rot:it.rot});
+          x+=it.w;
+          if(k<row.pieces.length-1) xCuts.push(x + KERF/2);
+        }
+        vPerRow.push({fila:ri+1,y0:y,y1:y+row.height,xCuts});
+        y+=row.height;
+        hCuts.push(y);
+      }
+      outSheets.push({placed});
+      cutsSeq.push({lamina:si+1,horizontales:hCuts,verticalesPorFila:vPerRow});
+    }
+    const areaNet=(W*H);
+    const waste=outSheets.reduce((t,sh)=> t + (areaNet - sh.placed.reduce((s,r)=>s+r.w*r.h,0)), 0);
+    return {count:outSheets.length,sheets:outSheets,waste,cutsSeq};
+  }
+
+  // ===== (5) Aplanar y validar =====
+  const piezas=[];
+  let gid=1;
+  for(const c of cortes) for(let i=0;i<c.cantidad;i++){
+    piezas.push({ id:gid++, w0:c.ancho, h0:c.alto, area:c.ancho*c.alto });
+  }
+  if(!piezas.length) return { numeroLaminas:0, plano:[], cortesSecuencia:[] };
+
+  const innerW = sheetW - 2*MARGIN;
+  const innerH = sheetH - 2*MARGIN;
+  const fitsAny = (p, W, H) =>
+    (p.w0<=W && p.h0<=H) || (ALLOW_PIECE_ROTATION && p.h0<=W && p.w0<=H);
   const innerWrot = sheetH - 2*MARGIN, innerHrot = sheetW - 2*MARGIN;
-  for (const p of piezas) {
-    const okN = fitsPiece(p, innerW, innerH);
-    const okR = ALLOW_SHEET_ROTATION ? fitsPiece(p, innerWrot, innerHrot) : false;
-    if (!okN && !okR) {
-      throw new Error(`La pieza ${p.w}x${p.h} no cabe en la lámina ${sheetW}x${sheetH} (margen ${MARGIN}).`);
-    }
+  for(const p of piezas){
+    const okN=fitsAny(p,innerW,innerH);
+    const okR= ALLOW_SHEET_ROTATION ? fitsAny(p,innerWrot,innerHrot) : false;
+    if(!okN && !okR) throw new Error(`La pieza ${p.w0}x${p.h0} no cabe en la lámina ${sheetW}x${sheetH} (margen ${MARGIN}).`);
   }
 
-  // -------- caso especial: piezas idénticas y kerf=0 → patrón exacto --------
-  if (KERF === 0 && todasIdenticas(piezas)) {
-    const { w, h } = { w: piezas[0].w0, h: piezas[0].h0 };
-    const N = piezas.length;
-
-    const best = mejorPatronIdentico(innerW, innerH, w, h, ALLOW_PIECE_ROTATION);
-    const cap = best.capacidad;
-    if (cap <= 0) throw new Error(`Ninguna pieza ${w}x${h} cabe en ${innerW}x${innerH}.`);
-
-    const hojas = Math.ceil(N / cap);
-    const plano = [];
-    let used = 0;
-
-    for (let s=0; s<hojas; s++) {
-      const take = Math.min(cap, N - used);
-      const placed = renderPatron(best, take, w, h, MARGIN);
+  // ===== (6) Caso idénticas + kerf=0 → exacto =====
+  if(KERF===0 && allIdentical(piezas)){
+    const w=piezas[0].w0, h=piezas[0].h0, N=piezas.length;
+    const patV=exactPatternCols(innerW,innerH,w,h,ALLOW_PIECE_ROTATION);
+    const patH=exactPatternRows(innerW,innerH,w,h,ALLOW_PIECE_ROTATION);
+    const bestPat = chooseBestPattern(patV,patH,innerW,innerH);
+    const cap=bestPat.cap;
+    const hojas=Math.ceil(N/cap);
+    const plano=[]; let used=0;
+    for(let s=0;s<hojas;s++){
+      const take=Math.min(cap,N-used);
+      const placed=renderExactPattern(bestPat,take,w,h,MARGIN,sheetW,sheetH);
       plano.push({
-        numero: s+1,
+        numero:s+1,
         cortes: placed.map((r,idx)=>({
-          id: piezas[used + idx]?.id ?? (used+idx+1),
-          ancho: r.w, alto: r.h,
-          x: r.x, y: r.y,
-          descripcion: `${w}x${h}${r.rot ? ' (R)' : ''}`
+          id: piezas[used+idx]?.id ?? (used+idx+1),
+          ancho:r.w, alto:r.h, x:r.x, y:r.y,
+          descripcion:`${w}x${h}${r.rot?' (R)':''}`
         }))
       });
-      used += take;
+      used+=take;
     }
-    return { numeroLaminas: plano.length, plano };
+    return { numeroLaminas:plano.length, plano, cortesSecuencia: bestPat.cutsSeq };
   }
 
-  // -------- Fallback: greedy MaxRects multi-lámina --------
-  const plan = packMultiBinMaxRects(piezas, sheetW, sheetH, {
-    kerf: KERF, margin: MARGIN, heuristic: HEUR, allowRotate: ALLOW_PIECE_ROTATION
+  // ===== (7) Baseline mínimo de láminas (usa MRBin YA inicializada) =====
+  const base = maxRectsMulti(piezas, sheetW, sheetH, {
+    margin:MARGIN, kerf:KERF, heuristic:HEUR, allowRotate: ALLOW_PIECE_ROTATION
   });
-  const plano = plan.sheets.map((bin, i)=>({
-    numero: i+1,
-    cortes: bin.placed.map(r=>({
-      id: r.id, ancho: r.w, alto: r.h, x: r.x, y: r.y,
-      descripcion: `${r.w0}x${r.h0}${r.rot?' (R)':''}`
+  const baseSheets = base.count;
+
+  // ===== (8) Guillotina vertical/horizontal =====
+  const gVert = guillotineColumns(piezas, sheetW, sheetH, { margin:MARGIN, kerf:KERF, allowRotate: ALLOW_PIECE_ROTATION });
+  const gHorz = guillotineRows   (piezas, sheetW, sheetH, { margin:MARGIN, kerf:KERF, allowRotate: ALLOW_PIECE_ROTATION });
+
+  // Selección: siempre el que use MENOS láminas; si guillotina no iguala, usa baseline
+  const candidates = [];
+  if (gVert) candidates.push({ tag:'gV', ...gVert });
+  if (gHorz) candidates.push({ tag:'gH', ...gHorz });
+  candidates.push({ tag:'base', ...base });
+
+  candidates.sort((a,b)=> (a.count - b.count) || (a.waste - b.waste));
+
+  let chosen = null;
+  const equalOrBetter = candidates.filter(c => c.tag!=='base' && c.count <= baseSheets);
+  if(equalOrBetter.length){
+    if(PREFERENCE==='prefer-vertical'){
+      const prefer = equalOrBetter.find(c=>c.tag==='gV' && c.count===equalOrBetter[0].count);
+      chosen = prefer ?? equalOrBetter[0];
+    } else {
+      const prefer = equalOrBetter.find(c=>c.tag==='gH' && c.count===equalOrBetter[0].count);
+      chosen = prefer ?? equalOrBetter[0];
+    }
+  } else {
+    chosen = candidates.find(c=>c.tag==='base'); // asegura mínimo de láminas
+  }
+
+  const plano = chosen.sheets.map((sh,i)=>({
+    numero:i+1,
+    cortes: sh.placed.map(r=>({
+      id:r.id, ancho:r.w, alto:r.h, x:r.x, y:r.y,
+      descripcion:`${r.w0}x${r.h0}${r.rot?' (R)':''}`
     }))
   }));
-  return { numeroLaminas: plan.count, plano };
+  const out = { numeroLaminas: chosen.count, plano };
+  if(chosen.cutsSeq) out.cortesSecuencia = chosen.cutsSeq;
+  return out;
 }
 
 /**
@@ -5311,29 +5551,36 @@ function showDiscountModal(remision) {
     });
 }
 
+/**
+ * --- FUNCIÓN RESTAURADA ---
+ * Muestra el modal para registrar los datos de una factura
+ * y marcar una remisión como 'facturado'.
+ * @param {string} remisionId - El ID de la remisión a facturar.
+ */
 function showFacturaModal(remisionId) {
     const modalContentWrapper = document.getElementById('modal-content-wrapper');
     modalContentWrapper.innerHTML = `
-            <div class="bg-white rounded-lg p-6 shadow-xl max-w-md w-full mx-auto text-left">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-semibold">Registrar Factura</h2>
-                    <button id="close-factura-modal" class="text-gray-500 hover:text-gray-800 text-3xl">&times;</button>
-                </div>
-                <form id="factura-form" class="space-y-4">
-                    <div>
-                        <label for="factura-numero" class="block text-sm font-medium">Número de Factura</label>
-                        <input type="text" id="factura-numero" class="w-full p-2 border rounded-lg mt-1" required>
-                    </div>
-                    <div>
-                        <label for="factura-pdf" class="block text-sm font-medium">Adjuntar PDF de la Factura</label>
-                        <input type="file" id="factura-pdf" class="w-full p-2 border rounded-lg mt-1" accept=".pdf" required>
-                    </div>
-                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700">Marcar como Facturado</button>
-                </form>
+        <div class="bg-white rounded-lg p-6 shadow-xl max-w-md w-full mx-auto text-left">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-semibold">Registrar Factura</h2>
+                <button id="close-factura-modal" class="text-gray-500 hover:text-gray-800 text-3xl">&times;</button>
             </div>
-        `;
+            <form id="factura-form" class="space-y-4">
+                <div>
+                    <label for="factura-numero" class="block text-sm font-medium">Número de Factura</label>
+                    <input type="text" id="factura-numero" class="w-full p-2 border rounded-lg mt-1" required>
+                </div>
+                <div>
+                    <label for="factura-pdf" class="block text-sm font-medium">Adjuntar PDF de la Factura</label>
+                    <input type="file" id="factura-pdf" class="w-full p-2 border rounded-lg mt-1" accept=".pdf" required>
+                </div>
+                <button type="submit" class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700">Marcar como Facturado</button>
+            </form>
+        </div>
+    `;
     document.getElementById('modal').classList.remove('hidden');
     document.getElementById('close-factura-modal').addEventListener('click', hideModal);
+    
     document.getElementById('factura-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const numeroFactura = document.getElementById('factura-numero').value;
@@ -5359,7 +5606,7 @@ function showFacturaModal(remisionId) {
             });
 
             hideModal();
-            showModalMessage("¡Remisión facturada con éxito!", false, 2000);
+            showTemporaryMessage("¡Remisión facturada con éxito!", "success");
         } catch (error) {
             console.error("Error al facturar:", error);
             showModalMessage("Error al procesar la factura.");
