@@ -751,7 +751,6 @@ exports.generateRemisionPDF = functions.firestore
         const remisionId = context.params.remisionId;
 
         try {
-            // --- INICIO DE LA CREACIÓN DEL DOCUMENTO MULTIPÁGINA ---
             const pdfDocFinal = await PDFDocument.create();
             const font = await pdfDocFinal.embedFont(StandardFonts.Helvetica);
             const fontBold = await pdfDocFinal.embedFont(StandardFonts.HelveticaBold);
@@ -813,13 +812,13 @@ exports.generateRemisionPDF = functions.firestore
                 let resumenTableBody = [];
                 let corteIdGlobal = 1;
                 itemsCortados.forEach(item => {
-                    item.planoDespiece.forEach(lamina => {
-                        lamina.cortes.forEach(corte => {
-                            resumenTableBody.push([`#${corteIdGlobal++}`, item.descripcion, corte.descripcion]);
+                    (item.planoDespiece || []).forEach(lamina => {
+                        (lamina.cortes || []).forEach(corte => {
+                            resumenTableBody.push([`#${corte.id}`, item.descripcion, corte.descripcion]);
                         });
                     });
                 });
-                resumenCreator.autoTable({ startY: 30, head: [['ID de Corte', 'Material', 'Medida Solicitada']], body: resumenTableBody, theme: 'striped' });
+                resumenCreator.autoTable({ startY: 30, head: [['ID de Corte', 'Material', 'Medida Solicitada (Ancho x Alto)']], body: resumenTableBody, theme: 'striped' });
                 
                 const [resumenPage] = await pdfDocFinal.copyPages(await PDFDocument.load(resumenCreator.output('arraybuffer')), [0]);
                 pdfDocFinal.addPage(resumenPage);
@@ -840,7 +839,7 @@ exports.generateRemisionPDF = functions.firestore
 
                         page.drawRectangle({ x: xOffset, y: yOffset, width: anchoMaestra * escala, height: altoMaestra * escala, borderColor: rgb(0.7, 0.7, 0.7), borderWidth: 1 });
                         
-                        lamina.cortes.forEach(corte => {
+                        (lamina.cortes || []).forEach(corte => {
                             page.drawRectangle({ x: xOffset + corte.x * escala, y: yOffset + corte.y * escala, width: corte.ancho * escala, height: corte.alto * escala, borderColor: rgb(0, 0, 0), borderWidth: 0.5, color: rgb(0.2, 0.6, 0.8), opacity: 0.2 });
                             const centroX = xOffset + (corte.x + corte.ancho / 2) * escala;
                             const centroY = yOffset + (corte.y + corte.alto / 2) * escala;

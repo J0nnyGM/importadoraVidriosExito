@@ -1,11 +1,13 @@
 // js/app.js (Versión Definitiva con Corrección en el Manejo de Formularios Dinámicos)
 
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateEmail } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, setDoc, getDoc, getDocs, query, orderBy, onSnapshot, deleteDoc, updateDoc, addDoc, runTransaction, arrayUnion, where, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
-import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { getAnalytics, logEvent } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateEmail } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js";
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, query, orderBy, onSnapshot, deleteDoc, updateDoc, addDoc, runTransaction, arrayUnion, where, writeBatch } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-storage.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-functions.js";
+import { getAnalytics, logEvent } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-analytics.js";
+
+
 
 // --- INICIALIZACIÓN Y CONFIGURACIÓN ---
 const firebaseConfig = {
@@ -272,12 +274,11 @@ function loadViewTemplates() {
                     </div>
                     <div>
                         <label for="fecha-recibido" class="block text-sm font-medium text-gray-700">Fecha Remisión</label>
-                        <input type="date" id="fecha-recibido" class="w-full p-3 border border-gray-300 rounded-lg mt-1 bg-gray-100" readonly>
+                        <input type="date" id="fecha-recibido" class="w-full p-3 border border-gray-300 rounded-lg mt-1 bg-gray-100" value="${new Date().toISOString().split('T')[0]}" readonly>
                     </div>
                     <div class="border-t border-b border-gray-200 py-4">
                         <h3 class="text-lg font-semibold mb-2">Ítems de la Remisión</h3>
-                        <div id="items-container" class="space-y-4">
-                        </div>
+                        <div id="items-container" class="space-y-4"></div>
                         <button type="button" id="add-item-btn" class="mt-4 w-full bg-gray-200 text-gray-700 font-semibold py-2 px-4 rounded-lg hover:bg-gray-300 transition-colors">+ Añadir Ítem</button>
                     </div>
                     <select id="forma-pago" class="w-full p-3 border border-gray-300 rounded-lg bg-white" required>
@@ -2493,421 +2494,326 @@ function leerDocumentosDelForm(importacionActual) {
 }
 
 /**
- * Optimización 2D con MaxRects + Beam Search (backtracking limitado) + búsqueda binaria en k.
- * - Lámina NO se rota por defecto (allowSheetRotation=false)
- * - Piezas SÍ se rotan por defecto (allowPieceRotation=true)
- * - kerf y margin opcionales
+ * Optimización rápida con patrón exacto para piezas idénticas
+ * + fallback greedy MaxRects multi-lámina (lámina fija por defecto).
  *
  * @param {number} sheetW
  * @param {number} sheetH
  * @param {Array<{ancho:number,alto:number,cantidad:number}>} cortes
  * @param {Object} [opts]
- *   @param {number}  [opts.maxTimeMs=60000]
  *   @param {number}  [opts.kerf=0]
  *   @param {number}  [opts.margin=0]
- *   @param {boolean} [opts.debug=false]
- *   @param {number}  [opts.maxRestarts=6]        // para greedy/restats
  *   @param {boolean} [opts.allowSheetRotation=false]
  *   @param {boolean} [opts.allowPieceRotation=true]
- *   @param {number}  [opts.beamCandidates=5]     // nº de colocaciones candidatas por pieza a explorar
+ *   @param {"BAF"|"BSSF"|"BL"} [opts.heuristic="BAF"]
  * @returns {{numeroLaminas:number, plano:Array<{numero:number,cortes:Array<{id,ancho,alto,x,y,descripcion}>}>}}
  */
 function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
-  // === Opciones ===
-  const MAX_TIME_MS          = opts.maxTimeMs ?? 60000;
-  const KERF                 = Math.max(0, opts.kerf ?? 0);
-  const MARGIN               = Math.max(0, opts.margin ?? 0);
-  const DEBUG                = !!opts.debug;
-  const MAX_RESTARTS         = Math.max(1, opts.maxRestarts ?? 6);
-  const ALLOW_SHEET_ROTATION = opts.allowSheetRotation ?? false;
+  // -------- Opciones / utils --------
+  const KERF   = Math.max(0, opts.kerf ?? 0);
+  const MARGIN = Math.max(0, opts.margin ?? 0);
+  const ALLOW_SHEET_ROTATION = opts.allowSheetRotation ?? false; // lámina NO se rota por defecto
   const ALLOW_PIECE_ROTATION = opts.allowPieceRotation ?? true;
-  const BEAM_CANDIDATES      = Math.max(2, opts.beamCandidates ?? 5);
+  const HEUR = opts.heuristic ?? "BAF";
 
-  const t0 = Date.now();
-  const timeLeft = () => (Date.now() - t0) < MAX_TIME_MS;
+  const cmpScore = (a,b)=> (a.primary!==b.primary) ? (a.primary-b.primary) : ((a.secondary??0)-(b.secondary??0));
+  const areaNet = (W,H,m) => Math.max(0,(W-2*m)) * Math.max(0,(H-2*m));
 
-  // === Utils ===
-  const comparePlacement = (a, b) => (a.primary !== b.primary) ? (a.primary - b.primary) : ((a.secondary ?? 0) - (b.secondary ?? 0));
-  const areaOfFree = (bin) => bin.freeRects.reduce((s,r)=> s + r.w*r.h, 0);
-
-  // === Clase MaxRects ===
+  // ====== Definir MaxRectsBin ANTES de usarla ======
   class MaxRectsBin {
-    constructor(width, height, kerf = 0) {
-      this.binW = width;
-      this.binH = height;
+    constructor(width, height, kerf=0) {
       this.kerf = kerf;
-      this.freeRects = [{ x:0, y:0, w:width, h:height }];
+      this.freeRects = [{x:0,y:0,w:width,h:height}];
       this.usedRects = [];
     }
     scoreFor(node, fr, heuristic) {
       switch (heuristic) {
         case 'BSSF': {
-          const ssf = Math.min(Math.abs(fr.w - node.w), Math.abs(fr.h - node.h));
-          const lsf = Math.max(Math.abs(fr.w - node.w), Math.abs(fr.h - node.h));
+          const ssf = Math.min(Math.abs(fr.w-node.w), Math.abs(fr.h-node.h));
+          const lsf = Math.max(Math.abs(fr.w-node.w), Math.abs(fr.h-node.h));
           return { primary: ssf, secondary: lsf };
         }
-        case 'BL': {
-          return { primary: node.y, secondary: node.x };
-        }
+        case 'BL':   return { primary: node.y, secondary: node.x };
         case 'BAF':
         default: {
-          const freeArea = fr.w * fr.h;
-          const fit = freeArea - node.w * node.h;
-          const ssf = Math.min(Math.abs(fr.w - node.w), Math.abs(fr.h - node.h));
+          const freeArea = fr.w*fr.h;
+          const fit = freeArea - node.w*node.h;
+          const ssf = Math.min(Math.abs(fr.w-node.w), Math.abs(fr.h-node.h));
           return { primary: fit, secondary: ssf };
         }
       }
     }
-    // Devuelve hasta topN posiciones candidatas (con o sin rotación)
-    findTopPositions(w, h, allowRotate, heuristic, topN = 3) {
-      const cands = [];
+    // mejor posición (Top-1) para rapidez
+    findBestPosition(w, h, allowRotate, heuristic) {
+      let best = null;
       const tryRect = (rw, rh, rot) => {
         for (const fr of this.freeRects) {
-          if (rw <= fr.w && rh <= fr.h) {
-            const node = { x: fr.x, y: fr.y, w: rw, h: rh };
+          if (rw<=fr.w && rh<=fr.h) {
+            const node = {x:fr.x, y:fr.y, w:rw, h:rh};
             const score = this.scoreFor(node, fr, heuristic);
-            cands.push({ node, score, rot });
+            if (!best || cmpScore(score,best.score)<0 ||
+                (cmpScore(score,best.score)===0 && (node.y<best.node.y || (node.y===best.node.y && node.x<best.node.x)))) {
+              best = { node, score, rot };
+            }
           }
         }
       };
-      tryRect(w, h, false);
-      if (allowRotate && w !== h) tryRect(h, w, true);
-
-      // ordenar por score (mejor primero) y tiebreak bottom-left
-      cands.sort((a,b)=>{
-        const c = comparePlacement(a.score, b.score);
-        if (c !== 0) return c;
-        if (a.node.y !== b.node.y) return a.node.y - b.node.y;
-        return a.node.x - b.node.x;
-      });
-      return cands.slice(0, topN);
+      tryRect(w,h,false);
+      if (allowRotate && w!==h) tryRect(h,w,true);
+      return best; // {node,score,rot} | null
     }
     placeRect(node) {
       const newFree = [];
       for (let i=0;i<this.freeRects.length;i++) {
         const fr = this.freeRects[i];
-        if (!intersects(fr, node)) { newFree.push(fr); continue; }
+        if (!intersects(fr,node)) { newFree.push(fr); continue; }
         // arriba
         if (node.y > fr.y) {
-          const h = Math.max(0, node.y - fr.y - this.kerf);
-          if (h > 0) newFree.push({ x:fr.x, y:fr.y, w:fr.w, h });
+          const h = node.y - fr.y - this.kerf; if (h>0) newFree.push({x:fr.x,y:fr.y,w:fr.w,h});
         }
         // abajo
         if (node.y + node.h < fr.y + fr.h) {
           const y = node.y + node.h + this.kerf;
-          const h = Math.max(0, (fr.y + fr.h) - (node.y + node.h) - this.kerf);
-          if (h > 0) newFree.push({ x:fr.x, y, w:fr.w, h });
+          const h = (fr.y + fr.h) - (node.y + node.h) - this.kerf;
+          if (h>0) newFree.push({x:fr.x,y,w:fr.w,h});
         }
         // izquierda
         if (node.x > fr.x) {
-          const w = Math.max(0, node.x - fr.x - this.kerf);
-          if (w > 0) newFree.push({ x:fr.x, y:fr.y, w, h:fr.h });
+          const w = node.x - fr.x - this.kerf; if (w>0) newFree.push({x:fr.x,y:fr.y,w,h:fr.h});
         }
         // derecha
         if (node.x + node.w < fr.x + fr.w) {
           const x = node.x + node.w + this.kerf;
-          const w = Math.max(0, (fr.x + fr.w) - (node.x + node.w) - this.kerf);
-          if (w > 0) newFree.push({ x, y:fr.y, w, h:fr.h });
+          const w = (fr.x + fr.w) - (node.x + node.w) - this.kerf;
+          if (w>0) newFree.push({x,y:fr.y,w,h:fr.h});
         }
       }
-      this.freeRects = pruneFree(newFree);
+      this.freeRects = pruneContained(newFree);
       this.usedRects.push(node);
 
-      function intersects(a, b) {
-        return !(b.x >= a.x + a.w || b.x + b.w <= a.x || b.y >= a.y + a.h || b.y + b.h <= a.y);
+      function intersects(a,b){
+        return !(b.x>=a.x+a.w || b.x+b.w<=a.x || b.y>=a.y+a.h || b.y+b.h<=a.y);
       }
-      function contains(A, B) {
-        return B.x >= A.x && B.y >= A.y && B.x + B.w <= A.x + A.w && B.y + B.h <= A.y + A.h;
+      function containedIn(a,b){
+        return a.x>=b.x && a.y>=b.y && a.x+a.w<=b.x+b.w && a.y+a.h<=b.y+b.h;
       }
-      function pruneFree(list) {
-        const out = [];
-        for (let i=0;i<list.length;i++) {
-          let contained = false;
-          for (let j=0;j<list.length;j++) {
-            if (i!==j && contains(list[j], list[i])) { contained = true; break; }
+      function pruneContained(list){
+        const out=[];
+        for (let i=0;i<list.length;i++){
+          let ok=true;
+          for (let j=0;j<list.length;j++){
+            if (i!==j && containedIn(list[i],list[j])){ ok=false; break; }
           }
-          if (!contained && list[i].w > 0 && list[i].h > 0) out.push(list[i]);
+          if (ok && list[i].w>0 && list[i].h>0) out.push(list[i]);
         }
         return out;
       }
     }
   }
 
-  // === Aplanar piezas ===
-  let piezas = []; let id = 1;
+  // ====== Helpers que usan MaxRectsBin (deben ir DESPUÉS de la clase) ======
+  function packMultiBinMaxRects(pieces, W, H, {kerf=0, margin=0, heuristic="BAF", allowRotate=true} = {}) {
+    const bins = [];
+    let remaining = pieces.slice().sort((a,b)=> b.area - a.area);
+
+    while (remaining.length) {
+      const bin = new MaxRectsBin(W - 2*margin, H - 2*margin, kerf);
+      const placed = [];
+      let moved = true;
+      while (moved && remaining.length) {
+        moved = false;
+        let best = null, bestIdx = -1;
+        for (let i=0;i<remaining.length;i++) {
+          const p = remaining[i];
+          const pos = bin.findBestPosition(p.w, p.h, allowRotate, heuristic);
+          if (pos) {
+            if (!best || cmpScore(pos.score,best.score)<0) { best = pos; bestIdx = i; }
+          }
+        }
+        if (best) {
+          const p = remaining[bestIdx];
+          bin.placeRect(best.node);
+          placed.push({
+            id: p.id,
+            x: best.node.x + margin,
+            y: best.node.y + margin,
+            w: best.node.w,
+            h: best.node.h,
+            w0: p.w0, h0: p.h0,
+            rot: best.rot
+          });
+          remaining.splice(bestIdx,1);
+          moved = true;
+        }
+      }
+      bins.push({ placed });
+    }
+    return { count: bins.length, sheets: bins };
+  }
+
+  function greedySingle(pieces, W, H, {kerf=0, margin=0, allowRotate=true, heuristic="BAF"}) {
+    const bin = new MaxRectsBin(W - 2*margin, H - 2*margin, kerf);
+    const list = pieces.slice().sort((a,b)=> b.area - a.area);
+    const placed = [];
+    for (let i=0;i<list.length;i++) {
+      const p = list[i];
+      const best = bin.findBestPosition(p.w, p.h, allowRotate, heuristic);
+      if (!best) return { success:false, placed };
+      bin.placeRect(best.node);
+      placed.push({
+        id:p.id, x:best.node.x+margin, y:best.node.y+margin,
+        w:best.node.w, h:best.node.h, w0:p.w0, h0:p.h0, rot:best.rot
+      });
+    }
+    return { success:true, placed };
+  }
+
+  // ====== Helpers SIN dependencia de la clase ======
+  function todasIdenticas(list) {
+    const a = list[0];
+    return list.every(p => p.w0 === a.w0 && p.h0 === a.h0);
+  }
+
+  function mejorPatronIdentico(W, H, w, h, allowRotate) {
+    // columnas mixtas (ancho w y ancho h)
+    const rowsU = Math.floor(H / h);
+    const rowsR = allowRotate ? Math.floor(H / w) : 0;
+    let bestCols = { capacidad: 0, c:0, d:0 };
+    for (let d = 0; d <= (allowRotate ? Math.floor(W / h) : 0); d++) {
+      const remW = W - d*h; if (remW < 0) break;
+      const c = Math.floor(remW / w);
+      const cap = c*rowsU + d*rowsR;
+      if (cap > bestCols.capacidad) bestCols = { capacidad: cap, c, d };
+    }
+    // filas mixtas (alto h y alto w)
+    const colsU = Math.floor(W / w);
+    const colsR = allowRotate ? Math.floor(W / h) : 0;
+    let bestRows = { capacidad: 0, a:0, b:0 };
+    for (let b = 0; b <= (allowRotate ? Math.floor(H / w) : 0); b++) {
+      const remH = H - b*w; if (remH < 0) break;
+      const a = Math.floor(remH / h);
+      const cap = a*colsU + b*colsR;
+      if (cap > bestRows.capacidad) bestRows = { capacidad: cap, a, b };
+    }
+    // elegir
+    const wasteCols = W*H - (bestCols.c*w + bestCols.d*h) * H;
+    const wasteRows = W*H - (bestRows.a*h + bestRows.b*w) * W;
+    if (bestCols.capacidad > bestRows.capacidad) return { modo:'cols', params: bestCols, capacidad: bestCols.capacidad };
+    if (bestRows.capacidad > bestCols.capacidad) return { modo:'rows', params: bestRows, capacidad: bestRows.capacidad };
+    return (wasteCols <= wasteRows)
+      ? { modo:'cols', params: bestCols, capacidad: bestCols.capacidad }
+      : { modo:'rows', params: bestRows, capacidad: bestRows.capacidad };
+  }
+
+  function renderPatron(patron, take, w, h, margin) {
+    const placed = [];
+    if (take <= 0) return placed;
+    if (patron.modo === 'cols') {
+      const { c, d } = patron.params;
+      let x = margin;
+      const rowsR = Math.floor((sheetH - 2*margin) / w);
+      for (let j=0; j<d; j++) {
+        let y = margin;
+        for (let i=0; i<rowsR && placed.length < take; i++) {
+          placed.push({ x, y, w:h, h:w, rot:true }); y += w;
+        }
+        x += h;
+      }
+      const rowsU = Math.floor((sheetH - 2*margin) / h);
+      for (let j=0; j<c && placed.length < take; j++) {
+        let y = margin;
+        for (let i=0; i<rowsU && placed.length < take; i++) {
+          placed.push({ x, y, w:w, h:h, rot:false }); y += h;
+        }
+        x += w;
+      }
+      return placed;
+    }
+    if (patron.modo === 'rows') {
+      const { a, b } = patron.params;
+      let y = margin;
+      const colsU = Math.floor((sheetW - 2*margin) / w);
+      for (let i=0; i<a && placed.length < take; i++) {
+        let x = margin;
+        for (let j=0; j<colsU && placed.length < take; j++) {
+          placed.push({ x, y, w:w, h:h, rot:false }); x += w;
+        }
+        y += h;
+      }
+      const colsR = Math.floor((sheetW - 2*margin) / h);
+      for (let i=0; i<b && placed.length < take; i++) {
+        let x = margin;
+        for (let j=0; j<colsR && placed.length < take; j++) {
+          placed.push({ x, y, w:h, h:w, rot:true }); x += h;
+        }
+        y += w;
+      }
+      return placed;
+    }
+    return placed;
+  }
+
+  // -------- aplanar piezas --------
+  let piezas = []; let id=1;
   for (const c of cortes) for (let i=0;i<c.cantidad;i++) {
     piezas.push({ id:id++, w:c.ancho, h:c.alto, w0:c.ancho, h0:c.alto, area:c.ancho*c.alto });
   }
+  if (!piezas.length) return { numeroLaminas: 0, plano: [] };
 
-  // === Validación (cabida con políticas de rotación) ===
+  // -------- validaciones básicas --------
   const innerW = sheetW - 2*MARGIN, innerH = sheetH - 2*MARGIN;
-  const innerWrot = sheetH - 2*MARGIN, innerHrot = sheetW - 2*MARGIN; // por si se permitiera rotar lámina
-  const fitsPieceIn = (p, W, H) => (p.w<=W && p.h<=H) || (ALLOW_PIECE_ROTATION && p.h<=W && p.w<=H);
+  const fitsPiece = (p,W,H)=> (p.w<=W && p.h<=H) || (ALLOW_PIECE_ROTATION && p.h<=W && p.w<=H);
+  const innerWrot = sheetH - 2*MARGIN, innerHrot = sheetW - 2*MARGIN;
   for (const p of piezas) {
-    const okNormal = fitsPieceIn(p, innerW, innerH);
-    const okRotLam = ALLOW_SHEET_ROTATION ? fitsPieceIn(p, innerWrot, innerHrot) : false;
-    if (!okNormal && !okRotLam) {
+    const okN = fitsPiece(p, innerW, innerH);
+    const okR = ALLOW_SHEET_ROTATION ? fitsPiece(p, innerWrot, innerHrot) : false;
+    if (!okN && !okR) {
       throw new Error(`La pieza ${p.w}x${p.h} no cabe en la lámina ${sheetW}x${sheetH} (margen ${MARGIN}).`);
     }
   }
 
-  // === Cotas por área ===
-  const totalArea = piezas.reduce((s,p)=>s+p.area,0);
-  const sheetAreaNet = Math.max(0, innerW) * Math.max(0, innerH);
-  const lowerBound = Math.max(1, Math.ceil(totalArea / sheetAreaNet));
+  // -------- caso especial: piezas idénticas y kerf=0 → patrón exacto --------
+  if (KERF === 0 && todasIdenticas(piezas)) {
+    const { w, h } = { w: piezas[0].w0, h: piezas[0].h0 };
+    const N = piezas.length;
 
-  // === Greedy multi-bin (cota superior rápida) ===
-  const upperGreedy = packMultiBinMaxRects(piezas, sheetW, sheetH, {
-    kerf: KERF, margin: MARGIN, heuristic: 'BAF',
-    allowRotate: ALLOW_PIECE_ROTATION
-  }).count;
+    const best = mejorPatronIdentico(innerW, innerH, w, h, ALLOW_PIECE_ROTATION);
+    const cap = best.capacidad;
+    if (cap <= 0) throw new Error(`Ninguna pieza ${w}x${h} cabe en ${innerW}x${innerH}.`);
 
-  if (DEBUG) console.log(`LB=${lowerBound}, UB=${upperGreedy}, piezas=${piezas.length}`);
+    const hojas = Math.ceil(N / cap);
+    const plano = [];
+    let used = 0;
 
-  // === Búsqueda binaria en k ===
-  let bestPlan = null;
-  let lo = lowerBound, hi = upperGreedy;
-
-  while (lo <= hi && timeLeft()) {
-    const mid = Math.floor((lo + hi) / 2);
-    if (DEBUG) console.log(`Probar k=${mid}`);
-
-    const attempt = tryPackAtMostK(piezas, sheetW, sheetH, mid, {
-      kerf: KERF, margin: MARGIN, maxRestarts: MAX_RESTARTS, debug: DEBUG,
-      timeLeft, allowPieceRotate: ALLOW_PIECE_ROTATION, allowSheetRotate: ALLOW_SHEET_ROTATION,
-      beamCandidates: BEAM_CANDIDATES
-    });
-
-    if (attempt && attempt.count <= mid) {
-      bestPlan = attempt; hi = attempt.count - 1; // bajar
-    } else {
-      lo = mid + 1; // subir
+    for (let s=0; s<hojas; s++) {
+      const take = Math.min(cap, N - used);
+      const placed = renderPatron(best, take, w, h, MARGIN);
+      plano.push({
+        numero: s+1,
+        cortes: placed.map((r,idx)=>({
+          id: piezas[used + idx]?.id ?? (used+idx+1),
+          ancho: r.w, alto: r.h,
+          x: r.x, y: r.y,
+          descripcion: `${w}x${h}${r.rot ? ' (R)' : ''}`
+        }))
+      });
+      used += take;
     }
+    return { numeroLaminas: plano.length, plano };
   }
 
-  if (!bestPlan) {
-    // Salvavidas si no alcanzó el tiempo
-    bestPlan = packMultiBinMaxRects(piezas, sheetW, sheetH, {
-      kerf: KERF, margin: MARGIN, heuristic: 'BAF',
-      allowRotate: ALLOW_PIECE_ROTATION
-    });
-  }
-
-  // === Salida ===
-  const plano = bestPlan.sheets.map((bin, i)=>({
+  // -------- Fallback: greedy MaxRects multi-lámina --------
+  const plan = packMultiBinMaxRects(piezas, sheetW, sheetH, {
+    kerf: KERF, margin: MARGIN, heuristic: HEUR, allowRotate: ALLOW_PIECE_ROTATION
+  });
+  const plano = plan.sheets.map((bin, i)=>({
     numero: i+1,
     cortes: bin.placed.map(r=>({
       id: r.id, ancho: r.w, alto: r.h, x: r.x, y: r.y,
-      descripcion: `${r.w0}x${r.h0}${r.rot ? ' (R)' : ''}`
+      descripcion: `${r.w0}x${r.h0}${r.rot?' (R)':''}`
     }))
   }));
-  return { numeroLaminas: bestPlan.count, plano };
-
-  // ================== Core de empaquetado ==================
-
-  // 1) Intento “completo”: Beam Search sobre MaxRects (para k fijo)
-  function tryPackAtMostK(pieces, W, H, K, params) {
-    const orients = (params.allowSheetRotate ? [{name:'Normal',W,H},{name:'Rotada',W:H,H:W}] : [{name:'Normal',W,H}]);
-    const heuristics = ['BAF','BSSF','BL'];
-
-    let best = null;
-
-    for (const o of orients) {
-      for (const h of heuristics) {
-        if (!params.timeLeft()) break;
-
-        // Beam search con distintos órdenes de piezas
-        const orders = [
-          (a,b)=> b.area - a.area,
-          (a,b)=> Math.max(b.w,b.h) - Math.max(a.w,a.h),
-          (a,b)=> b.h - a.h,
-          (a,b)=> b.w - a.w
-        ];
-
-        for (let r=0; r<Math.min(orders.length, params.maxRestarts); r++) {
-          if (!params.timeLeft()) break;
-
-          const sorted = pieces.slice().sort(orders[r]);
-          const res = packWithBeam(sorted, o.W, o.H, K, {
-            kerf: params.kerf, margin: params.margin, heuristic: h,
-            allowRotate: params.allowPieceRotate, beam: params.beamCandidates, timeLeft: params.timeLeft
-          });
-
-          // si beam no encontró, probamos greedy como respaldo en esta combinación
-          const fallback = (!res || res.count === Infinity)
-            ? packMultiBinMaxRects(sorted, o.W, o.H, { kerf: params.kerf, margin: params.margin, heuristic: h, maxBins: K, allowRotate: params.allowPieceRotate })
-            : res;
-
-          if (!best || fallback.count < best.count || (fallback.count === best.count && fallback.waste < best.waste)) {
-            best = { ...fallback, tag: `${o.name}|${h}|r${r}` };
-          }
-          if (best.count <= K) return best; // alcanzamos objetivo
-        }
-      }
-    }
-    return best;
-  }
-
-  // 2) Beam Search sobre MaxRects (profundidad = nº piezas, branching limitado)
-  function packWithBeam(piecesSorted, W, H, K, {kerf, margin, heuristic, allowRotate, beam, timeLeft}) {
-    const sheetArea = Math.max(0, (W - 2*margin) * (H - 2*margin));
-    const totalArea = piecesSorted.reduce((s,p)=>s+p.area,0);
-
-    const bins = [];             // MaxRectsBin[]
-    const placedSheets = [];     // {placed:[]}
-
-    function dfs(idx, remainingArea) {
-      if (!timeLeft()) return null;
-      if (idx >= piecesSorted.length) {
-        // construir plan
-        const planSheets = placedSheets.map(b=>({ placed: b.placed.slice() }));
-        return { count: planSheets.length, sheets: planSheets, waste: calcWaste(planSheets, W, H, margin) };
-      }
-
-      // cota por capacidad: área libre + bins restantes
-      const freeAreaNow = bins.reduce((s,b)=> s + areaOfFree(b), 0);
-      const capacity = freeAreaNow + (K - bins.length) * sheetArea;
-      if (capacity < remainingArea) return null;
-
-      const p = piecesSorted[idx];
-
-      // candidatos: topN en cada bin existente + posible bin nuevo
-      let candidates = [];
-
-      for (let bi=0; bi<bins.length; bi++) {
-        const tops = bins[bi].findTopPositions(p.w, p.h, allowRotate, heuristic, Math.min(2, beam)); // 2 por bin
-        for (const t of tops) candidates.push({ binIndex: bi, node: t.node, score: t.score, rot: t.rot, newBin: false });
-      }
-
-      if (bins.length < K) {
-        // simulación en bin nuevo
-        const temp = new MaxRectsBin(W - 2*margin, H - 2*margin, kerf);
-        const tops = temp.findTopPositions(p.w, p.h, allowRotate, heuristic, beam);
-        for (const t of tops) candidates.push({ binIndex: bins.length, node: t.node, score: t.score, rot: t.rot, newBin: true });
-      }
-
-      if (candidates.length === 0) return null;
-
-      // ordenar candidatos por score y preferir colocar en bins existentes primero (para no abrir bin si no hace falta)
-      candidates.sort((a,b)=>{
-        const c = comparePlacement(a.score, b.score);
-        if (c !== 0) return c;
-        if (a.newBin !== b.newBin) return (a.newBin ? 1 : -1);
-        if (a.node.y !== b.node.y) return a.node.y - b.node.y;
-        return a.node.x - b.node.x;
-      });
-
-      const take = Math.min(beam, candidates.length);
-      for (let ci=0; ci<take; ci++) {
-        const cand = candidates[ci];
-
-        // preparar bin
-        let bin;
-        let created = false;
-        if (cand.newBin) {
-          bin = new MaxRectsBin(W - 2*margin, H - 2*margin, kerf);
-          bins.push(bin);
-          placedSheets.push({ placed: [] });
-          created = true;
-        } else {
-          bin = bins[cand.binIndex];
-        }
-
-        // snapshot para rollback
-        const savedFree = bin.freeRects.map(r=>({...r}));
-        const savedUsed = bin.usedRects.slice();
-
-        // colocar
-        bin.placeRect(cand.node);
-        const sheetIdx = created ? (bins.length - 1) : cand.binIndex;
-        placedSheets[sheetIdx].placed.push({
-          id: p.id,
-          x: cand.node.x + margin,
-          y: cand.node.y + margin,
-          w: cand.node.w,
-          h: cand.node.h,
-          w0: p.w0,
-          h0: p.h0,
-          rot: (cand.node.w === p.h && cand.node.h === p.w)
-        });
-
-        const res = dfs(idx + 1, remainingArea - p.area);
-        if (res && res.count <= K) return res;
-
-        // rollback
-        placedSheets[sheetIdx].placed.pop();
-        bin.freeRects = savedFree;
-        bin.usedRects = savedUsed;
-        if (created) { bins.pop(); placedSheets.pop(); }
-      }
-      return null;
-    }
-
-    const out = dfs(0, totalArea);
-    return out ?? { count: Infinity, sheets: [], waste: Infinity };
-  }
-
-  // 3) Greedy Multi-bin MaxRects (respaldo/upper bound)
-  function packMultiBinMaxRects(pieces, W, H, { kerf=0, margin=0, heuristic='BAF', maxBins=Infinity, allowRotate=true } = {}) {
-    const bins = [];
-    let remaining = pieces.map(p => ({...p}));
-
-    while (remaining.length) {
-      if (bins.length >= maxBins) break;
-
-      const bin = new MaxRectsBin(W - 2*margin, H - 2*margin, kerf);
-      const placed = [];
-      let progress = true;
-
-      while (progress && remaining.length) {
-        progress = false;
-
-        let best = null, bestIdx = -1, bestNode = null, bestRot = false;
-        for (let i=0;i<remaining.length;i++) {
-          const p = remaining[i];
-          const tops = bin.findTopPositions(p.w, p.h, allowRotate, heuristic, 1); // solo el mejor
-          if (tops.length) {
-            const cand = tops[0];
-            if (!best || comparePlacement(cand.score, best.score) < 0) {
-              best = cand; bestIdx = i; bestNode = cand.node; bestRot = cand.rot;
-            }
-          }
-        }
-
-        if (best) {
-          bin.placeRect(bestNode);
-          const original = remaining[bestIdx];
-          placed.push({
-            id: original.id,
-            x: bestNode.x + margin,
-            y: bestNode.y + margin,
-            w: bestNode.w,
-            h: bestNode.h,
-            w0: original.w0,
-            h0: original.h0,
-            rot: bestRot
-          });
-          remaining.splice(bestIdx,1);
-          progress = true;
-        }
-      }
-
-      bins.push({ placed });
-      if (!progress && remaining.length) {
-        if (bins.length >= maxBins) break;
-      }
-    }
-
-    if (remaining.length) return { count: Infinity, sheets: bins, waste: Infinity };
-
-    const waste = calcWaste(bins, W, H, margin);
-    return { count: bins.length, sheets: bins, waste };
-  }
-
-  function calcWaste(bins, W, H, margin) {
-    const areaNet = (W - 2*margin) * (H - 2*margin);
-    return bins.reduce((t,b)=> t + (areaNet - b.placed.reduce((s,r)=> s + r.w*r.h, 0)), 0);
-  }
+  return { numeroLaminas: plan.count, plano };
 }
 
 /**
@@ -3176,6 +3082,8 @@ async function handleRemisionSubmit(e) {
 
         e.target.reset();
         document.getElementById('items-container').innerHTML = '';
+        // Restablecer la fecha al día actual para la siguiente remisión
+        document.getElementById('fecha-recibido').value = new Date().toISOString().split('T')[0];
         calcularTotales();
         hideModal();
         showTemporaryMessage("¡Remisión guardada con éxito!", "success");
