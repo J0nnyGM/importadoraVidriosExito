@@ -220,7 +220,7 @@ exports.onRemisionCreate = functions.region("us-central1").firestore
           <p>Hemos recibido tu orden y adjuntamos la remisión de servicio.</p>
           <p>El estado actual es: <strong>${remisionData.estado}</strong>.</p>
           <p>Gracias por confiar en nosotros.</p>
-          <p><strong>Prismacolor S.A.S.</strong></p>`,
+          <p><strong>Importadora Vidrios Exito</strong></p>`,
           attachments: [{
             content: pdfBuffer.toString("base64"),
             filename: `Remision-${remisionData.numeroRemision}.pdf`,
@@ -295,7 +295,7 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
                 html: `<p>Hola ${afterData.clienteNombre},</p>
                 <p>Te informamos que la remisión N° <strong>${afterData.numeroRemision}</strong> ha sido anulada.</p>
                 <p>Adjuntamos una copia del documento anulado para tus registros.</p>
-                <p><strong>Prismacolor S.A.S.</strong></p>`,
+                <p><strong>Importadora Vidrios Exito</strong></p>`,
                 attachments: [{
                     content: pdfBuffer.toString("base64"),
                     filename: `Remision-ANULADA-${afterData.numeroRemision}.pdf`,
@@ -331,7 +331,7 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
             <p>Te informamos que tu orden N° <strong>${afterData.numeroRemision}</strong> ha sido completada y marcada como <strong>entregada</strong>.</p>
             <p>Adjuntamos una copia final de la remisión para tus registros.</p>
             <p>¡Gracias por tu preferencia!</p>
-            <p><strong>Prismacolor S.A.S.</strong></p>`,
+            <p><strong>Importadora Vidrios Exito</strong></p>`,
             attachments: [{
               content: pdfBuffer.toString("base64"),
               filename: `Remision-ENTREGADA-${afterData.numeroRemision}.pdf`,
@@ -378,7 +378,7 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
                   <p>El valor total ha sido cancelado. Último pago registrado por ${ultimoPago.method}.</p>
                   <p>Adjuntamos la remisión actualizada para tus registros.</p>
                   <p>¡Gracias por tu confianza!</p>
-                  <p><strong>Prismacolor S.A.S.</strong></p>`,
+                  <p><strong>Importadora Vidrios Exito</strong></p>`,
                   attachments: [{
                       content: pdfBuffer.toString("base64"),
                       filename: `Remision-CANCELADA-${afterData.numeroRemision}.pdf`,
@@ -464,7 +464,7 @@ exports.applyDiscount = functions.https.onCall(async (data, context) => {
                    <p>Se ha aplicado un descuento del <strong>${discountPercentage.toFixed(2)}%</strong> a tu remisión N° ${finalRemisionData.numeroRemision}.</p>
                    <p>El nuevo total es: <strong>${formatCurrency(newTotal)}</strong>.</p>
                    <p>Adjuntamos la remisión actualizada.</p>
-                   <p><strong>Prismacolor S.A.S.</strong></p>`,
+                   <p><strong>Importadora Vidrios Exito</strong></p>`,
             attachments: [{
                 content: pdfBuffer.toString("base64"),
                 filename: `Remision-Actualizada-${finalRemisionData.numeroRemision}.pdf`,

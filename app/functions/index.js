@@ -355,7 +355,7 @@ exports.onRemisionCreate = functions.region("us-central1").firestore
                     to: remisionData.clienteEmail,
                     from: FROM_EMAIL,
                     subject: `Confirmación de Remisión N° ${remisionData.numeroRemision}`,
-                    html: `<p>Hola ${remisionData.clienteNombre},</p><p>Hemos recibido tu orden y adjuntamos la remisión de servicio.</p><p>El estado actual es: <strong>${remisionData.estado}</strong>.</p><p>Gracias por confiar en nosotros.</p><p><strong>Prismacolor S.A.S.</strong></p>`,
+                    html: `<p>Hola ${remisionData.clienteNombre},</p><p>Hemos recibido tu orden y adjuntamos la remisión de servicio.</p><p>El estado actual es: <strong>${remisionData.estado}</strong>.</p><p>Gracias por confiar en nosotros.</p><p><strong>Importadora Vidrios Exito</strong></p>`,
                     attachments: [{
                         content: pdfBuffer.toString("base64"),
                         filename: `Remision-${remisionData.numeroRemision}.pdf`,
@@ -536,7 +536,7 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
                     html: `<p>Hola ${afterData.clienteNombre},</p>
                     <p>Te informamos que la remisión N° <strong>${afterData.numeroRemision}</strong> ha sido anulada.</p>
                     <p>Adjuntamos una copia del documento anulado para tus registros.</p>
-                    <p><strong>Prismacolor S.A.S.</strong></p>`,
+                    <p><strong>Importadora Vidrios Exito</strong></p>`,
                     attachments: [{
                         content: pdfBuffer.toString("base64"),
                         filename: `Remision-ANULADA-${afterData.numeroRemision}.pdf`,
@@ -576,7 +576,7 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
                     <p>Te informamos que tu orden N° <strong>${afterData.numeroRemision}</strong> ha sido completada y marcada como <strong>entregada</strong>.</p>
                     <p>Adjuntamos una copia final de la remisión para tus registros.</p>
                     <p>¡Gracias por tu preferencia!</p>
-                    <p><strong>Prismacolor S.A.S.</strong></p>`,
+                    <p><strong>Importadora Vidrios Exito</strong></p>`,
                     attachments: [{
                         content: pdfBuffer.toString("base64"),
                         filename: `Remision-ENTREGADA-${afterData.numeroRemision}.pdf`,
@@ -624,7 +624,7 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
                     <p>El valor total ha sido cancelado. Último pago registrado por ${ultimoPago.method}.</p>
                     <p>Adjuntamos la remisión actualizada para tus registros.</p>
                     <p>¡Gracias por tu confianza!</p>
-                    <p><strong>Prismacolor S.A.S.</strong></p>`,
+                    <p><strong>Importadora Vidrios Exito</strong></p>`,
                     attachments: [{
                         content: pdfBuffer.toString("base64"),
                         filename: `Remision-CANCELADA-${afterData.numeroRemision}.pdf`,
@@ -725,7 +725,7 @@ exports.applyDiscount = functions.https.onCall(async (data, context) => {
                    <p>Se ha aplicado un descuento del <strong>${discountPercentage.toFixed(2)}%</strong> a tu remisión N° ${finalRemisionData.numeroRemision}.</p>
                    <p>El nuevo total es: <strong>${formatCurrency(newTotal)}</strong>.</p>
                    <p>Adjuntamos la remisión actualizada.</p>
-                   <p><strong>Prismacolor S.A.S.</strong></p>`,
+                   <p><strong>Importadora Vidrios Exito</strong></p>`,
             attachments: [{
                 content: pdfBuffer.toString("base64"),
                 filename: `Remision-Actualizada-${finalRemisionData.numeroRemision}.pdf`,
@@ -759,7 +759,7 @@ exports.generateRemisionPDF = functions.firestore
             const remisionCreator = new jsPDF();
             // Encabezado
             remisionCreator.setFont("helvetica", "bold").setFontSize(20).text("Remisión de Servicio", remisionCreator.internal.pageSize.getWidth() / 2, 20, { align: "center" });
-            remisionCreator.setFont("helvetica", "normal").setFontSize(9).text("IMPORTADORA DE VIDRIOS ÉXITO | NIT: 1.000.000.000-1 | Tel: 300 123 4567", remisionCreator.internal.pageSize.getWidth() / 2, 28, { align: "center" });
+            remisionCreator.setFont("helvetica", "normal").setFontSize(9).text("IMPORTADORA DE VIDRIOS ÉXITO | NIT: 900.284.049-3 | Tel: 311 810 9893", remisionCreator.internal.pageSize.getWidth() / 2, 28, { align: "center" });
             remisionCreator.setFontSize(16).setFont("helvetica", "bold").text(`N°: ${remisionData.numeroRemision}`, remisionCreator.internal.pageSize.getWidth() - 20, 45, { align: "right" });
             
             // Datos Remisión y Cliente
@@ -1012,6 +1012,115 @@ exports.onImportacionUpdate = functions.firestore
                         .catch(err => functions.logger.error("Error al registrar gasto por abono:", err));
                 }
             });
+        }
+        return null;
+    });
+
+
+// Reemplaza la función setMyUserAsAdmin con esta versión más explícita
+exports.setMyUserAsAdmin = functions.https.onRequest(async (req, res) => {
+    // --- INICIO DE LA LÓGICA MANUAL DE PERMISOS (CORS) ---
+    // Le decimos al navegador que confiamos en cualquier origen (para desarrollo)
+    res.set('Access-Control-Allow-Origin', '*');
+
+    // Manejar la solicitud de "inspección" (preflight) que hace el navegador
+    if (req.method === 'OPTIONS') {
+        res.set('Access-Control-Allow-Methods', 'POST');
+        res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+        res.status(204).send('');
+        return;
+    }
+    // --- FIN DE LA LÓGICA MANUAL DE PERMISOS (CORS) ---
+
+    // El resto de la lógica para verificar y asignar el permiso de admin
+    const idToken = req.headers.authorization?.split('Bearer ')[1];
+    if (!idToken) {
+        return res.status(401).send({ error: 'Unauthorized: No se proporcionó token.' });
+    }
+
+    try {
+        const decodedToken = await admin.auth().verifyIdToken(idToken);
+        const userId = decodedToken.uid;
+        await admin.auth().setCustomUserClaims(userId, { admin: true });
+        
+        console.log(`Permiso de 'admin' OTORGADO al usuario ${userId}.`);
+        return res.status(200).send({ data: { message: `¡Éxito! El usuario ${userId} ahora tiene permisos de admin.` } });
+
+    } catch (error) {
+        console.error("Error al establecer permisos de administrador:", error);
+        return res.status(500).send({ error: 'Error interno del servidor.' });
+    }
+});
+
+
+    /**
+ * NUEVA FUNCIÓN: Cambia el estado de un usuario (active, inactive).
+ * Invocable solo por administradores.
+ */
+exports.setUserStatus = functions.https.onCall(async (data, context) => {
+    // 1. Verificar que el que llama es un administrador
+    if (!context.auth || !context.auth.token.admin) {
+        throw new functions.https.HttpsError(
+            "permission-denied",
+            "Solo los administradores pueden cambiar el estado de un usuario."
+        );
+    }
+
+    // 2. Validar los datos de entrada
+    const { userId, newStatus } = data;
+    if (!userId || !['active', 'inactive', 'pending'].includes(newStatus)) {
+        throw new functions.https.HttpsError(
+            "invalid-argument",
+            "Faltan datos o el nuevo estado no es válido (userId, newStatus)."
+        );
+    }
+
+    try {
+        // 3. Actualizar el documento del usuario en Firestore
+        const userRef = admin.firestore().collection("users").doc(userId);
+        await userRef.update({ status: newStatus });
+
+        return { success: true, message: `Estado del usuario ${userId} actualizado a ${newStatus}.` };
+    } catch (error) {
+        functions.logger.error(`Error al actualizar estado para ${userId}:`, error);
+        throw new functions.https.HttpsError(
+            "internal",
+            "No se pudo actualizar el estado del usuario."
+        );
+    }
+});
+/**
+ * NUEVA FUNCIÓN: Se activa cuando se escribe en un documento de usuario.
+ * Sincroniza el rol de Firestore con un "custom claim" en Firebase Auth.
+ * Esto permite que otras Cloud Functions verifiquen de forma segura si un usuario es admin.
+ */
+exports.onUserRoleChange = functions.firestore
+    .document('users/{userId}')
+    .onWrite(async (change, context) => {
+        const userId = context.params.userId;
+        const afterData = change.after.exists ? change.after.data() : null;
+        const beforeData = change.before.exists ? change.before.data() : null;
+
+        const newRole = afterData ? afterData.role : null;
+        const oldRole = beforeData ? beforeData.role : null;
+
+        // Si el rol no cambió o el usuario fue eliminado, no hacer nada.
+        if (newRole === oldRole) {
+            return null;
+        }
+
+        try {
+            if (newRole === 'admin') {
+                // Si el nuevo rol es admin, establecer la estampa de administrador.
+                await admin.auth().setCustomUserClaims(userId, { admin: true });
+                console.log(`Permiso de 'admin' OTORGADO al usuario ${userId}.`);
+            } else if (oldRole === 'admin' && newRole !== 'admin') {
+                // Si el usuario dejó de ser admin, remover la estampa.
+                await admin.auth().setCustomUserClaims(userId, { admin: false });
+                console.log(`Permiso de 'admin' REVOCADO al usuario ${userId}.`);
+            }
+        } catch (error) {
+            console.error(`Error al establecer permisos para ${userId}:`, error);
         }
         return null;
     });

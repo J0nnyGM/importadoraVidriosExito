@@ -720,22 +720,22 @@ function setupEventListeners() {
             }
         });
     }
-    const empleadosView = document.getElementById('view-empleados');
-    if (empleadosView) {
-        empleadosView.addEventListener('click', async (e) => {
-            const target = e.target;
-            if (target.classList.contains('user-status-btn')) {
-                const uid = target.dataset.uid;
-                const newStatus = target.dataset.status;
-                if (confirm(`¿Estás seguro de que quieres cambiar el estado de este usuario a "${newStatus}"?`)) {
-                    try {
-                        await updateDoc(doc(db, "users", uid), { status: newStatus });
-                        showTemporaryMessage("Estado del usuario actualizado.", "success");
-                    } catch (error) {
-                        showTemporaryMessage("No se pudo actualizar el estado.", "error");
-                    }
+const empleadosView = document.getElementById('view-empleados');
+if (empleadosView) {
+    empleadosView.addEventListener('click', async (e) => {
+        const target = e.target;
+        if (target.classList.contains('user-status-btn')) {
+            const uid = target.dataset.uid;
+            const newStatus = target.dataset.status;
+            if (confirm(`¿Estás seguro de que quieres cambiar el estado de este usuario a "${newStatus}"?`)) {
+                try {
+                    await updateDoc(doc(db, "users", uid), { status: newStatus });
+                    showTemporaryMessage("Estado del usuario actualizado.", "success");
+                } catch (error) {
+                    showTemporaryMessage("No se pudo actualizar el estado.", "error");
                 }
             }
+        }
             if (target.classList.contains('manage-user-btn')) {
                 showAdminEditUserModal(JSON.parse(target.dataset.userJson));
             }
@@ -770,38 +770,104 @@ function switchView(viewName, tabs, views) {
     if (views[viewName]) views[viewName].classList.remove('hidden');
 }
 
-// --- FUNCIONES DE CARGA Y RENDERIZADO DE DATOS ---
-function loadEmpleados() {
+function renderAndAttachEmployeeListeners(users) {
     const empleadosListEl = document.getElementById('empleados-list');
-    if (!currentUserData || currentUserData.role !== 'admin' || !empleadosListEl) {
-        return () => { }; // Retorna una función vacía si no hay nada que hacer
-    }
-    const q = query(collection(db, "users"));
-    // Añadir 'return' aquí
-    return onSnapshot(q, (snapshot) => {
-        const users = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        allUsers = snapshot.docs.map(d => ({ id: d.id, ...d.data() })); // Guardamos los usuarios en la variable global
-        empleadosListEl.innerHTML = '';
-        users.filter(u => u.id !== currentUser.uid).forEach(empleado => {
-            const el = document.createElement('div');
-            el.className = 'border p-4 rounded-lg flex justify-between items-center';
-            el.innerHTML = `
-                <div>
-                    <p class="font-semibold">${empleado.nombre} <span class="text-sm font-normal text-gray-500">(${empleado.role})</span></p>
-                    <p class="text-sm text-gray-600">${empleado.email}</p>
+    if (!empleadosListEl) return;
+    
+    empleadosListEl.innerHTML = '';
+
+    users.filter(u => u.id !== currentUser.uid).forEach(empleado => {
+        const el = document.createElement('div');
+        el.className = 'border p-4 rounded-lg flex flex-col sm:flex-row justify-between items-center gap-4';
+        
+        let statusBadge = '';
+        let toggleButtonHTML = '';
+
+        switch (empleado.status) {
+            case 'active':
+                statusBadge = `<span class="text-xs font-semibold bg-green-200 text-green-800 px-2 py-1 rounded-full">Activo</span>`;
+                toggleButtonHTML = `<button data-uid="${empleado.id}" data-status="inactive" class="user-status-btn bg-yellow-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-yellow-600 transition w-full">Desactivar</button>`;
+                break;
+            case 'inactive':
+                statusBadge = `<span class="text-xs font-semibold bg-gray-200 text-gray-800 px-2 py-1 rounded-full">Inactivo</span>`;
+                toggleButtonHTML = `<button data-uid="${empleado.id}" data-status="active" class="user-status-btn bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-600 transition w-full">Activar</button>`;
+                break;
+            default:
+                statusBadge = `<span class="text-xs font-semibold bg-yellow-200 text-yellow-800 px-2 py-1 rounded-full">Pendiente</span>`;
+                toggleButtonHTML = `<button data-uid="${empleado.id}" data-status="active" class="user-status-btn bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-600 transition w-full">Activar</button>`;
+                break;
+        }
+
+        el.innerHTML = `
+            <div class="flex-grow">
+                <div class="flex items-center gap-2 mb-1">
+                     <p class="font-semibold">${empleado.nombre}</p>
+                     ${statusBadge}
                 </div>
-                <div class="flex flex-wrap gap-2">
-                    <button data-user-json='${JSON.stringify(empleado)}' class="manage-rrhh-docs-btn w-full bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-600 transition">Recursos Humanos</button>
-                    <button data-user-json='${JSON.stringify(empleado)}' class="manage-user-btn w-full bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-600 transition">Gestionar</button>
-                    <button data-uid="${empleado.id}" class="delete-user-btn w-full bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-red-600 transition">Eliminar</button>
-                </div>`;
-            empleadosListEl.appendChild(el);
+                <p class="text-sm text-gray-600">${empleado.email} <span class="text-sm font-normal text-gray-500">(${empleado.role})</span></p>
+            </div>
+            <div class="flex-shrink-0 grid grid-cols-2 sm:grid-cols-4 gap-2 w-full sm:w-auto">
+                <button data-user-json='${JSON.stringify(empleado)}' class="manage-rrhh-docs-btn bg-teal-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-teal-600 transition w-full">RR.HH.</button>
+                <button data-user-json='${JSON.stringify(empleado)}' class="manage-user-btn bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-600 transition w-full">Gestionar</button>
+                ${toggleButtonHTML}
+                <button data-uid="${empleado.id}" class="delete-user-btn bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-red-600 transition w-full">Eliminar</button>
+            </div>`;
+        empleadosListEl.appendChild(el);
+    });
+
+    // Asignar listeners a los botones recién creados
+    document.querySelectorAll('.user-status-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const userId = e.currentTarget.dataset.uid;
+            const newStatus = e.currentTarget.dataset.status;
+            if (confirm(`¿Estás seguro de que quieres cambiar el estado de este usuario a "${newStatus}"?`)) {
+                showModalMessage("Actualizando estado...", true);
+                const setUserStatus = httpsCallable(functions, 'setUserStatus');
+                try {
+                    await setUserStatus({ userId, newStatus });
+                    hideModal();
+                    showTemporaryMessage("Estado del usuario actualizado.", "success");
+                } catch (error) {
+                    console.error("Error al cambiar estado de usuario:", error);
+                    showModalMessage(`Error: ${error.message}`);
+                }
+            }
         });
-        document.querySelectorAll('.manage-rrhh-docs-btn').forEach(btn => btn.addEventListener('click', (e) => showRRHHModal(JSON.parse(e.currentTarget.dataset.userJson))));
-        document.querySelectorAll('.manage-user-btn').forEach(btn => btn.addEventListener('click', (e) => showAdminEditUserModal(JSON.parse(e.currentTarget.dataset.userJson))));
-        document.querySelectorAll('.delete-user-btn').forEach(btn => { btn.addEventListener('click', async (e) => { const uid = e.target.dataset.uid; if (confirm('¿Estás seguro de que quieres eliminar este usuario? Esta acción no se puede deshacer.')) { await deleteDoc(doc(db, "users", uid)); showModalMessage("Usuario eliminado de Firestore.", false, 2000); } }); });
+    });
+
+    document.querySelectorAll('.manage-rrhh-docs-btn').forEach(btn => btn.addEventListener('click', (e) => showRRHHModal(JSON.parse(e.currentTarget.dataset.userJson))));
+    document.querySelectorAll('.manage-user-btn').forEach(btn => btn.addEventListener('click', (e) => showAdminEditUserModal(JSON.parse(e.currentTarget.dataset.userJson))));
+    document.querySelectorAll('.delete-user-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const uid = e.currentTarget.dataset.uid;
+            if (confirm('¿Estás seguro de que quieres eliminar este usuario?')) {
+                await deleteDoc(doc(db, "users", uid));
+                showTemporaryMessage("Usuario eliminado.", false, 2000);
+            }
+        });
     });
 }
+
+function loadEmpleados() {
+    if (!currentUserData || currentUserData.role !== 'admin') {
+        return () => {}; // Salir si no es admin
+    }
+    const q = query(collection(db, "users"), orderBy("nombre"));
+    
+    return onSnapshot(q, (snapshot) => {
+        allUsers = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        
+        // Ordenar para que los pendientes/inactivos aparezcan primero
+        const sortedUsers = [...allUsers].sort((a, b) => {
+            const statusOrder = { 'pending': 1, 'inactive': 2, 'active': 3 };
+            return (statusOrder[a.status] || 99) - (statusOrder[b.status] || 99);
+        });
+        
+        // Llamar a la función que dibuja y asigna los listeners
+        renderAndAttachEmployeeListeners(sortedUsers);
+    });
+}
+
 function loadColores() {
     const q = query(collection(db, "colores"), orderBy("nombre", "asc"));
     return onSnapshot(q, (snapshot) => {
@@ -809,6 +875,7 @@ function loadColores() {
         renderColores();
     });
 }
+
 function renderColores() {
     const coloresListEl = document.getElementById('colores-list');
     if (!coloresListEl) return;
@@ -824,6 +891,7 @@ function renderColores() {
         coloresListEl.appendChild(colorDiv);
     });
 }
+
 function loadItems() {
     const q = query(collection(db, "items"), orderBy("referencia", "asc"));
     return onSnapshot(q, (snapshot) => {
@@ -2625,435 +2693,418 @@ function leerDocumentosDelForm(importacionActual) {
  * }}
  */
 function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
-  // ===== Opciones =====
-  const KERF   = Math.max(0, opts.kerf ?? 0);
-  const MARGIN = Math.max(0, opts.margin ?? 0);
-  const ALLOW_SHEET_ROTATION = opts.allowSheetRotation ?? false;
-  const ALLOW_PIECE_ROTATION = opts.allowPieceRotation ?? true;
-  const HEUR = opts.heuristic ?? "BAF";
-  const PREFERENCE = opts.preference ?? "prefer-vertical";
+    // --- Opciones ---
+    const KERF = Math.max(0, opts.kerf ?? 0);
+    const MARGIN = Math.max(0, opts.margin ?? 0);
+    const ALLOW_SHEET_ROTATION = opts.allowSheetRotation ?? false;
+    const ALLOW_PIECE_ROTATION = opts.allowPieceRotation ?? true;
+    const HEUR = opts.heuristic ?? "BAF";
+    const PREFERENCE = opts.preference; // Sin valor por defecto para ser neutro
 
-  // ===== Utils =====
-  const cmpScore = (a,b)=> (a.primary!==b.primary) ? (a.primary-b.primary) : ((a.secondary??0)-(b.secondary??0));
+    // --- Clases y Funciones Internas ---
 
-  // ===== (1) CLASE MRBin ANTES DE USARLA =====
-  class MRBin {
-    constructor(W,H,kerf=0){ this.kerf=kerf; this.free=[{x:0,y:0,w:W,h:H}]; }
-    _score(node, fr, heur){
-      switch(heur){
-        case 'BSSF': {
-          const ssf = Math.min(Math.abs(fr.w-node.w), Math.abs(fr.h-node.h));
-          const lsf = Math.max(Math.abs(fr.w-node.w), Math.abs(fr.h-node.h));
-          return {primary:ssf,secondary:lsf};
-        }
-        case 'BL': return {primary:node.y,secondary:node.x};
-        default: {
-          const fit = fr.w*fr.h - node.w*node.h;
-          const ssf = Math.min(Math.abs(fr.w-node.w), Math.abs(fr.h-node.h));
-          return {primary:fit,secondary:ssf};
-        }
-      }
-    }
-    find(w,h,rotOK,heur){
-      let best=null;
-      const tryR=(rw,rh,rot)=>{
-        for(const fr of this.free){
-          if(rw<=fr.w && rh<=fr.h){
-            const node={x:fr.x,y:fr.y,w:rw,h:rh};
-            const sc=this._score(node,fr,heur);
-            if(!best || sc.primary<best.score.primary ||
-               (sc.primary===best.score.primary && sc.secondary<best.score.secondary)) {
-              best={node,score:sc,rot};
+    class MRBin {
+        constructor(W, H, kerf = 0) { this.kerf = kerf; this.free = [{ x: 0, y: 0, w: W, h: H }]; }
+        _score(node, fr, heur) {
+            switch (heur) {
+                case 'BSSF': {
+                    const ssf = Math.min(Math.abs(fr.w - node.w), Math.abs(fr.h - node.h));
+                    const lsf = Math.max(Math.abs(fr.w - node.w), Math.abs(fr.h - node.h));
+                    return { primary: ssf, secondary: lsf };
+                }
+                case 'BL': return { primary: node.y, secondary: node.x };
+                default: {
+                    const fit = fr.w * fr.h - node.w * node.h;
+                    const ssf = Math.min(Math.abs(fr.w - node.w), Math.abs(fr.h - node.h));
+                    return { primary: fit, secondary: ssf };
+                }
             }
-          }
         }
-      };
-      tryR(w,h,false);
-      if(rotOK && w!==h) tryR(h,w,true);
-      return best;
-    }
-    place(n){
-      const out=[];
-      for(const fr of this.free){
-        if(!(n.x>=fr.x+fr.w || n.x+n.w<=fr.x || n.y>=fr.y+fr.h || n.y+n.h<=fr.y)){
-          // arriba
-          if(n.y>fr.y){ const h=n.y-fr.y-this.kerf; if(h>0) out.push({x:fr.x,y:fr.y,w:fr.w,h}); }
-          // abajo
-          if(n.y+n.h<fr.y+fr.h){
-            const y=n.y+n.h+this.kerf, h=fr.y+fr.h-(n.y+n.h)-this.kerf; if(h>0) out.push({x:fr.x,y,w:fr.w,h});
-          }
-          // izq
-          if(n.x>fr.x){ const w=n.x-fr.x-this.kerf; if(w>0) out.push({x:fr.x,y:fr.y,w,h:fr.h}); }
-          // der
-          if(n.x+n.w<fr.x+fr.w){
-            const x=n.x+n.w+this.kerf, w=fr.x+fr.w-(n.x+n.w)-this.kerf; if(w>0) out.push({x,y:fr.y,w,h:fr.h});
-          }
-        } else out.push(fr);
-      }
-      // prune contenidos
-      const pr=[];
-      for(let i=0;i<out.length;i++){
-        let ok=true;
-        for(let j=0;j<out.length;j++){
-          if(i!==j && out[i].x>=out[j].x && out[i].y>=out[j].y &&
-             out[i].x+out[i].w<=out[j].x+out[j].w && out[i].y+out[i].h<=out[j].y+out[j].h){ ok=false; break; }
+        find(w, h, rotOK, heur) {
+            let best = null;
+            const tryR = (rw, rh, rot) => {
+                for (const fr of this.free) {
+                    if (rw <= fr.w && rh <= fr.h) {
+                        const node = { x: fr.x, y: fr.y, w: rw, h: rh };
+                        const sc = this._score(node, fr, heur);
+                        if (!best || sc.primary < best.score.primary ||
+                            (sc.primary === best.score.primary && sc.secondary < best.score.secondary)) {
+                            best = { node, score: sc, rot };
+                        }
+                    }
+                }
+            };
+            tryR(w, h, false);
+            if (rotOK && w !== h) tryR(h, w, true);
+            return best;
         }
-        if(ok && out[i].w>0 && out[i].h>0) pr.push(out[i]);
-      }
-      this.free=pr;
+        place(n) {
+            const out = [];
+            for (const fr of this.free) {
+                if (!(n.x >= fr.x + fr.w || n.x + n.w <= fr.x || n.y >= fr.y + fr.h || n.y + n.h <= fr.y)) {
+                    if (n.y > fr.y) { const h = n.y - fr.y - this.kerf; if (h > 0) out.push({ x: fr.x, y: fr.y, w: fr.w, h }); }
+                    if (n.y + n.h < fr.y + fr.h) {
+                        const y = n.y + n.h + this.kerf, h = fr.y + fr.h - (n.y + n.h) - this.kerf; if (h > 0) out.push({ x: fr.x, y, w: fr.w, h });
+                    }
+                    if (n.x > fr.x) { const w = n.x - fr.x - this.kerf; if (w > 0) out.push({ x: fr.x, y: fr.y, w, h: fr.h }); }
+                    if (n.x + n.w < fr.x + fr.w) {
+                        const x = n.x + n.w + this.kerf, w = fr.x + fr.w - (n.x + n.w) - this.kerf; if (w > 0) out.push({ x, y: fr.y, w, h: fr.h });
+                    }
+                } else out.push(fr);
+            }
+            const pr = [];
+            for (let i = 0; i < out.length; i++) {
+                let ok = true;
+                for (let j = 0; j < out.length; j++) {
+                    if (i !== j && out[i].x >= out[j].x && out[i].y >= out[j].y &&
+                        out[i].x + out[i].w <= out[j].x + out[j].w && out[i].y + out[i].h <= out[j].y + out[j].h) { ok = false; break; }
+                }
+                if (ok && out[i].w > 0 && out[i].h > 0) pr.push(out[i]);
+            }
+            this.free = pr;
+        }
     }
-  }
 
-  // ===== (2) Baseline MaxRects que USA MRBin =====
-  function maxRectsMulti(pieces, SW, SH, {margin=0,kerf=0,heuristic="BAF",allowRotate=true}){
-    const W=SW-2*margin, H=SH-2*margin, sheets=[];
-    const list=pieces.slice().map(p=>({...p})).sort((a,b)=> b.area-a.area);
-    let i=0;
-    while(i<list.length){
-      const bin=new MRBin(W,H,kerf);
-      const placed=[];
-      let moved=true;
-      while(moved && i<list.length){
-        moved=false;
-        let best=null, idx=-1;
-        for(let k=i;k<list.length;k++){
-          const p=list[k];
-          const pos=bin.find(p.w0,p.h0,allowRotate,heuristic);
-          if(pos && (!best ||
-            pos.score.primary<best.score.primary ||
-            (pos.score.primary===best.score.primary && pos.score.secondary<best.score.secondary))){
-            best=pos; idx=k;
-          }
+    function maxRectsMulti(pieces, SW, SH, { margin = 0, kerf = 0, heuristic = "BAF", allowRotate = true }) {
+        const W = SW - 2 * margin, H = SH - 2 * margin, sheets = [];
+        const list = pieces.slice().map(p => ({ ...p })).sort((a, b) => b.area - a.area);
+        let i = 0;
+        while (i < list.length) {
+            const bin = new MRBin(W, H, kerf);
+            const placed = [];
+            let moved = true;
+            while (moved && i < list.length) {
+                moved = false;
+                let best = null, idx = -1;
+                for (let k = i; k < list.length; k++) {
+                    const p = list[k];
+                    const pos = bin.find(p.w0, p.h0, allowRotate, heuristic);
+                    if (pos && (!best ||
+                        pos.score.primary < best.score.primary ||
+                        (pos.score.primary === best.score.primary && pos.score.secondary < best.score.secondary))) {
+                        best = pos; idx = k;
+                    }
+                }
+                if (best) {
+                    bin.place(best.node);
+                    const p = list[idx];
+                    placed.push({ id: p.id, x: best.node.x + margin, y: best.node.y + margin, w: best.node.w, h: best.node.h, w0: p.w0, h0: p.h0, rot: best.rot });
+                    [list[idx], list[i]] = [list[i], list[idx]]; i++; moved = true;
+                }
+            }
+            if (placed.length > 0) sheets.push({ placed });
         }
-        if(best){
-          bin.place(best.node);
-          const p=list[idx];
-          placed.push({ id:p.id, x:best.node.x+margin, y:best.node.y+margin,
-                        w:best.node.w, h:best.node.h, w0:p.w0, h0:p.h0,
-                        rot:best.rot });
-          [list[idx],list[i]]=[list[i],list[idx]]; i++; moved=true;
-        }
-      }
-      sheets.push({ placed });
+        if (sheets.length === 0 && list.length > 0) return null;
+        const waste = sheets.reduce((t, sh) => t + (W * H - sh.placed.reduce((s, r) => s + r.w * r.h, 0)), 0);
+        return { count: sheets.length, sheets, waste };
     }
-    const waste = sheets.reduce((t,sh)=> t + (W*H - sh.placed.reduce((s,r)=>s+r.w*r.h,0)), 0);
-    return { count:sheets.length, sheets, waste };
-  }
 
-  // ===== (3) Exacto idénticas (guillotina cerrada) =====
-  function allIdentical(arr){ const a=arr[0]; return arr.every(p=>p.w0===a.w0 && p.h0===a.h0); }
-  function exactPatternCols(W,H,w,h,allowRotate){
-    const rowsU=Math.floor(H/h), rowsR=allowRotate?Math.floor(H/w):0;
-    let best={cap:0,c:0,d:0,modo:'cols'};
-    for(let d=0; d<= (allowRotate?Math.floor(W/h):0); d++){
-      const rem=W-d*h; if(rem<0) break;
-      const c=Math.floor(rem/w);
-      const cap=c*rowsU + d*rowsR;
-      if(cap>best.cap) best={cap,c,d,modo:'cols'};
+    function allIdentical(arr) { const a = arr[0]; return arr.every(p => p.w0 === a.w0 && p.h0 === a.h0); }
+    
+    function exactPatternCols(W, H, w, h, allowRotate) {
+        const rowsU = Math.floor(H / h), rowsR = allowRotate ? Math.floor(H / w) : 0;
+        let best = { cap: 0, c: 0, d: 0, modo: 'cols' };
+        for (let d = 0; d <= (allowRotate ? Math.floor(W / h) : 0); d++) {
+            const rem = W - d * h; if (rem < 0) break;
+            const c = Math.floor(rem / w);
+            const cap = c * rowsU + d * rowsR;
+            if (cap > best.cap) best = { cap, c, d, modo: 'cols' };
+        }
+        best.cutsSeq = [{ lamina: 1, verticales: [] }];
+        return best;
     }
-    best.cutsSeq=[{lamina:1,verticales:[] }]; // opcional visual
-    return best;
-  }
-  function exactPatternRows(W,H,w,h,allowRotate){
-    const colsU=Math.floor(W/w), colsR=allowRotate?Math.floor(W/h):0;
-    let best={cap:0,a:0,b:0,modo:'rows'};
-    for(let b=0; b<= (allowRotate?Math.floor(H/w):0); b++){
-      const rem=H-b*w; if(rem<0) break;
-      const a=Math.floor(rem/h);
-      const cap=a*colsU + b*colsR;
-      if(cap>best.cap) best={cap,a,b,modo:'rows'};
+    
+    function exactPatternRows(W, H, w, h, allowRotate) {
+        const colsU = Math.floor(W / w), colsR = allowRotate ? Math.floor(W / h) : 0;
+        let best = { cap: 0, a: 0, b: 0, modo: 'rows' };
+        for (let b = 0; b <= (allowRotate ? Math.floor(H / w) : 0); b++) {
+            const rem = H - b * w; if (rem < 0) break;
+            const a = Math.floor(rem / h);
+            const cap = a * colsU + b * colsR;
+            if (cap > best.cap) best = { cap, a, b, modo: 'rows' };
+        }
+        best.cutsSeq = [{ lamina: 1, horizontales: [] }];
+        return best;
     }
-    best.cutsSeq=[{lamina:1,horizontales:[]}];
-    return best;
-  }
-  function chooseBestPattern(A,B,W,H){
-    if(A.cap>B.cap) return A;
-    if(B.cap>A.cap) return B;
-    const wasteA = W*H - (A.modo==='cols' ? (A.c*W*0 + A.d*W*0, (A.c*0 + A.d*0)) : 0); // no afecta selección aquí
-    const wasteB = wasteA;
-    return A; // empate: cualquiera, no cambia láminas
-  }
-  function renderExactPattern(pat,take,w,h,m,SW,SH){
-    const placed=[]; if(take<=0) return placed;
-    if(pat.modo==='cols'){
-      let x=m;
-      const rowsR=Math.floor((SH-2*m)/w);
-      for(let j=0;j<pat.d && placed.length<take;j++){
-        let y=m; for(let i=0;i<rowsR && placed.length<take;i++){ placed.push({x,y,w:h,h:w,rot:true}); y+=w; }
-        x+=h;
-      }
-      const rowsU=Math.floor((SH-2*m)/h);
-      for(let j=0;j<pat.c && placed.length<take;j++){
-        let y=m; for(let i=0;i<rowsU && placed.length<take;i++){ placed.push({x,y,w:w,h:h,rot:false}); y+=h; }
-        x+=w;
-      }
-      return placed;
+
+    function chooseBestPattern(A, B) {
+        if (A.cap > B.cap) return A;
+        if (B.cap > A.cap) return B;
+        return A; // En caso de empate, por defecto uno.
+    }
+
+    function renderExactPattern(pat, take, w, h, m, SW, SH) {
+        const placed = []; if (take <= 0) return placed;
+        if (pat.modo === 'cols') {
+            let x = m;
+            const rowsR = Math.floor((SH - 2 * m) / w);
+            for (let j = 0; j < pat.d && placed.length < take; j++) {
+                let y = m; for (let i = 0; i < rowsR && placed.length < take; i++) { placed.push({ x, y, w: h, h: w, rot: true }); y += w; }
+                x += h;
+            }
+            const rowsU = Math.floor((SH - 2 * m) / h);
+            for (let j = 0; j < pat.c && placed.length < take; j++) {
+                let y = m; for (let i = 0; i < rowsU && placed.length < take; i++) { placed.push({ x, y, w: w, h: h, rot: false }); y += h; }
+                x += w;
+            }
+            return placed;
+        } else {
+            let y = m;
+            const colsU = Math.floor((SW - 2 * m) / w);
+            for (let i = 0; i < pat.a && placed.length < take; i++) {
+                let x = m; for (let j = 0; j < colsU && placed.length < take; j++) { placed.push({ x, y, w: w, h: h, rot: false }); x += w; }
+                y += h;
+            }
+            const colsR = Math.floor((SW - 2 * m) / h);
+            for (let i = 0; i < pat.b && placed.length < take; i++) {
+                let x = m; for (let j = 0; j < colsR && placed.length < take; j++) { placed.push({ x, y, w: h, h: w, rot: true }); x += h; }
+                y += w;
+            }
+            return placed;
+        }
+    }
+
+    function guillotineColumns(pieces, SW, SH, { margin = 0, kerf = 0, allowRotate = true }) {
+        const W = SW - 2 * margin, H = SH - 2 * margin;
+        const items = pieces.map(p => ({ ...p }));
+        const cols = [];
+        const sorted = items.sort((a, b) => Math.max(b.w0, b.h0) - Math.max(a.w0, a.h0) || (b.w0 * b.h0 - a.w0 * a.h0));
+        const orient = (p) => {
+            const o = [{ w: p.w0, h: p.h0, rot: false }];
+            if (allowRotate && p.w0 !== p.h0) o.push({ w: p.h0, h: p.w0, rot: true });
+            return o;
+        };
+
+        for (const p of sorted) {
+            let best = null, bestCol = -1, bestOpt = null;
+            const opts = orient(p);
+            for (let ci = 0; ci < cols.length; ci++) {
+                const col = cols[ci];
+                for (const o of opts) {
+                    const need = (col.pieces.length ? kerf : 0) + o.h;
+                    if (col.usedH + need <= H) {
+                        const dW = Math.max(0, o.w - col.width);
+                        const slack = H - (col.usedH + need);
+                        const score = dW * 1e6 + slack;
+                        if (!best || score < best.score) { best = { score }, bestCol = ci, bestOpt = o; }
+                    }
+                }
+            }
+            if (best) {
+                const col = cols[bestCol];
+                col.width = Math.max(col.width, bestOpt.w);
+                if (col.pieces.length) col.usedH += kerf;
+                col.pieces.push({ id: p.id, w: bestOpt.w, h: bestOpt.h, rot: bestOpt.rot, w0: p.w0, h0: p.h0 });
+                col.usedH += bestOpt.h;
+                continue;
+            }
+            const feas = opts.filter(o => o.h <= H).sort((a, b) => (a.w - b.w) || (b.h - a.h));
+            if (!feas.length) return null;
+            const o = feas[0];
+            cols.push({ width: o.w, usedH: o.h, pieces: [{ id: p.id, w: o.w, h: o.h, rot: o.rot, w0: p.w0, h0: p.h0 }] });
+        }
+
+        const sheets = [];
+        const colsSorted = cols.sort((a, b) => b.width - a.width);
+        for (const c of colsSorted) {
+            let ok = false;
+            for (const sh of sheets) {
+                const need = (sh.cols.length ? kerf : 0) + c.width;
+                if (sh.usedW + need <= (W)) { sh.cols.push(c); sh.usedW += need; ok = true; break; }
+            }
+            if (!ok) sheets.push({ usedW: c.width, cols: [c] });
+        }
+
+        const outSheets = [], cutsSeq = [];
+        for (let si = 0; si < sheets.length; si++) {
+            const sh = sheets[si];
+            let x = MARGIN;
+            const placed = [];
+            const vCuts = []; const hPerCol = [];
+            for (let ci = 0; ci < sh.cols.length; ci++) {
+                const col = sh.cols[ci];
+                if (ci > 0) x += KERF;
+                let y = MARGIN;
+                const yCuts = [];
+                for (let k = 0; k < col.pieces.length; k++) {
+                    const it = col.pieces[k];
+                    if (k > 0) y += KERF;
+                    placed.push({ id: it.id, x, y, w: it.w, h: it.h, w0: it.w0, h0: it.h0, rot: it.rot });
+                    y += it.h;
+                    if (k < col.pieces.length - 1) yCuts.push(y + KERF / 2);
+                }
+                hPerCol.push({ columna: ci + 1, x0: x, x1: x + col.width, yCuts });
+                x += col.width;
+                if( ci < sh.cols.length -1 ) vCuts.push(x);
+            }
+            outSheets.push({ placed });
+            cutsSeq.push({ lamina: si + 1, verticales: vCuts, horizontalesPorColumna: hPerCol });
+        }
+        const areaNet = (W * H);
+        const waste = outSheets.reduce((t, sh) => t + (areaNet - sh.placed.reduce((s, r) => s + r.w * r.h, 0)), 0);
+        return { count: outSheets.length, sheets: outSheets, waste, cutsSeq };
+    }
+
+    function guillotineRows(pieces, SW, SH, { margin = 0, kerf = 0, allowRotate = true }) {
+        const W = SW - 2 * margin, H = SH - 2 * margin;
+        const items = pieces.map(p => ({ ...p }));
+        const rows = [];
+        const sorted = items.sort((a, b) => Math.max(b.w0, b.h0) - Math.max(a.w0, a.h0) || (b.w0 * b.h0 - a.w0 * a.h0));
+        const orient = (p) => {
+            const o = [{ w: p.w0, h: p.h0, rot: false }];
+            if (allowRotate && p.w0 !== p.h0) o.push({ w: p.h0, h: p.w0, rot: true });
+            return o;
+        };
+
+        for (const p of sorted) {
+            let best = null, bestRow = -1, bestOpt = null;
+            const opts = orient(p);
+            for (let ri = 0; ri < rows.length; ri++) {
+                const row = rows[ri];
+                for (const o of opts) {
+                    const need = (row.pieces.length ? kerf : 0) + o.w;
+                    if (row.usedW + need <= W) {
+                        const dH = Math.max(0, o.h - row.height);
+                        const score = dH * 1e6 + (W - (row.usedW + need));
+                        if (!best || score < best.score) { best = { score }, bestRow = ri, bestOpt = o; }
+                    }
+                }
+            }
+            if (best) {
+                const row = rows[bestRow];
+                row.height = Math.max(row.height, bestOpt.h);
+                if (row.pieces.length) row.usedW += kerf;
+                row.pieces.push({ id: p.id, w: bestOpt.w, h: bestOpt.h, rot: bestOpt.rot, w0: p.w0, h0: p.h0 });
+                row.usedW += bestOpt.w;
+                continue;
+            }
+            const feas = opts.filter(o => o.w <= W).sort((a, b) => (a.h - b.h) || (b.w - a.w));
+            if (!feas.length) return null;
+            const o = feas[0];
+            rows.push({ height: o.h, usedW: o.w, pieces: [{ id: p.id, w: o.w, h: o.h, rot: o.rot, w0: p.w0, h0: p.h0 }] });
+        }
+
+        const sheets = [];
+        const rowsSorted = rows.sort((a, b) => b.height - a.height);
+        for (const r of rowsSorted) {
+            let ok = false;
+            for (const sh of sheets) {
+                const usedH = sh.rows.reduce((s, rr) => s + rr.height, 0) + (sh.rows.length > 1 ? kerf * (sh.rows.length - 1) : 0);
+                const need = (sh.rows.length ? kerf : 0) + r.height;
+                if (usedH + need <= H) { sh.rows.push(r); ok = true; break; }
+            }
+            if (!ok) sheets.push({ rows: [r] });
+        }
+        
+        const outSheets = [], cutsSeq = [];
+        for (let si = 0; si < sheets.length; si++) {
+            const sh = sheets[si];
+            let y = MARGIN;
+            const placed = []; const hCuts = []; const vPerRow = [];
+            for (let ri = 0; ri < sh.rows.length; ri++) {
+                const row = sh.rows[ri];
+                if (ri > 0) y += KERF;
+                let x = MARGIN;
+                const xCuts = [];
+                for (let k = 0; k < row.pieces.length; k++) {
+                    const it = row.pieces[k];
+                    if (k > 0) x += KERF;
+                    placed.push({ id: it.id, x, y, w: it.w, h: it.h, w0: it.w0, h0: it.h0, rot: it.rot });
+                    x += it.w;
+                    if (k < row.pieces.length - 1) xCuts.push(x + KERF / 2);
+                }
+                vPerRow.push({ fila: ri + 1, y0: y, y1: y + row.height, xCuts });
+                y += row.height;
+                if(ri < sh.rows.length - 1) hCuts.push(y);
+            }
+            outSheets.push({ placed });
+            cutsSeq.push({ lamina: si + 1, horizontales: hCuts, verticalesPorFila: vPerRow });
+        }
+        const areaNet = (W * H);
+        const waste = outSheets.reduce((t, sh) => t + (areaNet - sh.placed.reduce((s, r) => s + r.w * r.h, 0)), 0);
+        return { count: outSheets.length, sheets: outSheets, waste, cutsSeq };
+    }
+
+    // --- Aplanar y validar ---
+    const piezas = [];
+    let gid = 1;
+    for (const c of cortes) for (let i = 0; i < c.cantidad; i++) {
+        piezas.push({ id: gid++, w0: c.ancho, h0: c.alto, area: c.ancho * c.alto });
+    }
+    if (!piezas.length) return { numeroLaminas: 0, plano: [], cortesSecuencia: [] };
+
+    const innerW = sheetW - 2 * MARGIN;
+    const innerH = sheetH - 2 * MARGIN;
+    const fitsAny = (p, W, H) =>
+        (p.w0 <= W && p.h0 <= H) || (ALLOW_PIECE_ROTATION && p.h0 <= W && p.w0 <= H);
+    const innerWrot = sheetH - 2 * MARGIN, innerHrot = sheetW - 2 * MARGIN;
+    for (const p of piezas) {
+        const okN = fitsAny(p, innerW, innerH);
+        const okR = ALLOW_SHEET_ROTATION ? fitsAny(p, innerWrot, innerHrot) : false;
+        if (!okN && !okR) throw new Error(`La pieza ${p.w0}x${p.h0} no cabe en la lámina ${sheetW}x${sheetH} (margen ${MARGIN}).`);
+    }
+
+    // --- Caso idénticas + kerf=0 ---
+    if (KERF === 0 && allIdentical(piezas)) {
+        const w = piezas[0].w0, h = piezas[0].h0, N = piezas.length;
+        const patV = exactPatternCols(innerW, innerH, w, h, ALLOW_PIECE_ROTATION);
+        const patH = exactPatternRows(innerW, innerH, w, h, ALLOW_PIECE_ROTATION);
+        const bestPat = chooseBestPattern(patV, patH);
+        const cap = bestPat.cap;
+        if (cap === 0) return { numeroLaminas: Infinity, plano: [], error: "No se pudo colocar ninguna pieza." };
+        const hojas = Math.ceil(N / cap);
+        const plano = []; let used = 0;
+        for (let s = 0; s < hojas; s++) {
+            const take = Math.min(cap, N - used);
+            const placed = renderExactPattern(bestPat, take, w, h, MARGIN, sheetW, sheetH);
+            plano.push({ numero: s + 1, cortes: placed.map((r, idx) => ({ id: piezas[used + idx]?.id ?? (used + idx + 1), ancho: r.w, alto: r.h, x: r.x, y: r.y, descripcion: `${w}x${h}${r.rot ? ' (R)' : ''}` })) });
+            used += take;
+        }
+        return { numeroLaminas: plano.length, plano, cortesSecuencia: bestPat.cutsSeq };
+    }
+
+    // --- Algoritmos y Selección ---
+    const base = maxRectsMulti(piezas, sheetW, sheetH, { margin: MARGIN, kerf: KERF, heuristic: HEUR, allowRotate: ALLOW_PIECE_ROTATION });
+    const gVert = guillotineColumns(piezas, sheetW, sheetH, { margin: MARGIN, kerf: KERF, allowRotate: ALLOW_PIECE_ROTATION });
+    const gHorz = guillotineRows(piezas, sheetW, sheetH, { margin: MARGIN, kerf: KERF, allowRotate: ALLOW_PIECE_ROTATION });
+    const baseSheets = base ? base.count : Infinity;
+    
+    const candidates = [];
+    if (gVert) candidates.push({ tag: 'gV', ...gVert });
+    if (gHorz) candidates.push({ tag: 'gH', ...gHorz });
+    if (base) candidates.push({ tag: 'base', ...base });
+
+    candidates.sort((a, b) => (a.count - b.count) || (a.waste - b.waste));
+
+    let chosen = null;
+    const equalOrBetter = candidates.filter(c => c.tag !== 'base' && c.count <= baseSheets);
+
+    if (equalOrBetter.length > 0) {
+        if (PREFERENCE === 'prefer-vertical') {
+            const prefer = equalOrBetter.find(c => c.tag === 'gV' && c.count === equalOrBetter[0].count);
+            chosen = prefer ?? equalOrBetter[0];
+        } else {
+            chosen = equalOrBetter[0];
+        }
     } else {
-      let y=m;
-      const colsU=Math.floor((SW-2*m)/w);
-      for(let i=0;i<pat.a && placed.length<take;i++){
-        let x=m; for(let j=0;j<colsU && placed.length<take;j++){ placed.push({x,y,w:w,h:h,rot:false}); x+=w; }
-        y+=h;
-      }
-      const colsR=Math.floor((SW-2*m)/h);
-      for(let i=0;i<pat.b && placed.length<take;i++){
-        let x=m; for(let j=0;j<colsR && placed.length<take;j()){ placed.push({x,y,w:h,h:w,rot:true}); x+=h; }
-        y+=w;
-      }
-      return placed;
-    }
-  }
-
-  // ===== (4) Guillotine columnas/filas =====
-  function guillotineColumns(pieces, SW, SH, {margin=0,kerf=0,allowRotate=true}){
-    const W=SW-2*margin, H=SH-2*margin;
-    const items=pieces.map(p=>({...p}));
-    const cols=[];
-    const sorted=items.sort((a,b)=> Math.max(b.w0,b.h0)-Math.max(a.w0,a.h0) || (b.w0*b.h0 - a.w0*a.h0));
-    const orient=(p)=> {
-      const o=[{w:p.w0,h:p.h0,rot:false}];
-      if(allowRotate && p.w0!==p.h0) o.push({w:p.h0,h:p.w0,rot:true});
-      return o;
-    };
-
-    for(const p of sorted){
-      let best=null, bestCol=-1, bestOpt=null;
-      const opts=orient(p);
-      for(let ci=0;ci<cols.length;ci++){
-        const col=cols[ci];
-        for(const o of opts){
-          const need=(col.pieces.length?kerf:0)+o.h;
-          if(col.usedH+need<=H){
-            const dW=Math.max(0,o.w-col.width);
-            const slack=H-(col.usedH+need);
-            const score=dW*1e6+slack;
-            if(!best || score<best.score){ best={score}, bestCol=ci, bestOpt=o; }
-          }
-        }
-      }
-      if(best){
-        const col=cols[bestCol];
-        col.width=Math.max(col.width,bestOpt.w);
-        if(col.pieces.length) col.usedH+=kerf;
-        col.pieces.push({id:p.id,w:bestOpt.w,h:bestOpt.h,rot:bestOpt.rot,w0:p.w0,h0:p.h0});
-        col.usedH+=bestOpt.h;
-        continue;
-      }
-      const feas=opts.filter(o=>o.h<=H).sort((a,b)=> (a.w-b.w)||(b.h-a.h));
-      if(!feas.length) return null;
-      const o=feas[0];
-      cols.push({width:o.w,usedH:o.h,pieces:[{id:p.id,w:o.w,h:o.h,rot:o.rot,w0:p.w0,h0:p.h0}]});
+        chosen = candidates.find(c => c.tag === 'base');
     }
 
-    // Empaque 1D de columnas por ancho
-    const sheets=[];
-    const colsSorted=cols.sort((a,b)=> b.width-a.width);
-    for(const c of colsSorted){
-      let ok=false;
-      for(const sh of sheets){
-        const need=(sh.cols.length?KERF:0)+c.width;
-        if(sh.usedW+need<= (W)){ sh.cols.push(c); sh.usedW+=need; ok=true; break; }
-      }
-      if(!ok) sheets.push({usedW:c.width, cols:[c]});
+    if (!chosen) {
+      return { numeroLaminas: Infinity, plano: [], error: "No se encontró una solución de corte." };
     }
-
-    // plano + cortes
-    const outSheets=[], cutsSeq=[];
-    for(let si=0; si<sheets.length; si++){
-      const sh=sheets[si];
-      let x=MARGIN;
-      const placed=[];
-      const vCuts=[]; const hPerCol=[];
-      for(let ci=0; ci<sh.cols.length; ci++){
-        const col=sh.cols[ci];
-        if(ci>0) x+=KERF;
-        let y=MARGIN;
-        const yCuts=[];
-        for(let k=0;k<col.pieces.length;k++){
-          const it=col.pieces[k];
-          if(k>0) y+=KERF;
-          placed.push({id:it.id,x,y,w:it.w,h:it.h,w0:it.w0,h0:it.h0,rot:it.rot});
-          y+=it.h;
-          if(k<col.pieces.length-1) yCuts.push(y + KERF/2);
-        }
-        hPerCol.push({columna:ci+1,x0:x,x1:x+col.width,yCuts});
-        x+=col.width;
-        vCuts.push(x);
-      }
-      outSheets.push({placed});
-      cutsSeq.push({lamina:si+1,verticales:vCuts,horizontalesPorColumna:hPerCol});
-    }
-    const areaNet=(W*H);
-    const waste=outSheets.reduce((t,sh)=> t + (areaNet - sh.placed.reduce((s,r)=>s+r.w*r.h,0)), 0);
-    return {count:outSheets.length,sheets:outSheets,waste,cutsSeq};
-  }
-
-  function guillotineRows(pieces, SW, SH, {margin=0,kerf=0,allowRotate=true}){
-    const W=SW-2*margin, H=SH-2*margin;
-    const items=pieces.map(p=>({...p}));
-    const rows=[];
-    const sorted=items.sort((a,b)=> Math.max(b.w0,b.h0)-Math.max(a.w0,a.h0) || (b.w0*b.h0 - a.w0*a.h0));
-    const orient=(p)=> {
-      const o=[{w:p.w0,h:p.h0,rot:false}];
-      if(allowRotate && p.w0!==p.h0) o.push({w:p.h0,h:p.w0,rot:true});
-      return o;
-    };
-
-    for(const p of sorted){
-      let best=null, bestRow=-1, bestOpt=null;
-      const opts=orient(p);
-      for(let ri=0; ri<rows.length; ri++){
-        const row=rows[ri];
-        for(const o of opts){
-          const need=(row.pieces.length?kerf:0)+o.w;
-          if(row.usedW+need<=W){
-            const dH=Math.max(0,o.h-row.height);
-            const score=dH*1e6 + (W-(row.usedW+need));
-            if(!best || score<best.score){ best={score}, bestRow=ri, bestOpt=o; }
-          }
-        }
-      }
-      if(best){
-        const row=rows[bestRow];
-        row.height=Math.max(row.height,bestOpt.h);
-        if(row.pieces.length) row.usedW+=kerf;
-        row.pieces.push({id:p.id,w:bestOpt.w,h:bestOpt.h,rot:bestOpt.rot,w0:p.w0,h0:p.h0});
-        row.usedW+=bestOpt.w;
-        continue;
-      }
-      const feas=opts.filter(o=>o.w<=W).sort((a,b)=> (a.h-b.h)||(b.w-a.w));
-      if(!feas.length) return null;
-      const o=feas[0];
-      rows.push({height:o.h, usedW:o.w, pieces:[{id:p.id,w:o.w,h:o.h,rot:o.rot,w0:p.w0,h0:p.h0}]});
-    }
-
-    const sheets=[];
-    const rowsSorted=rows.sort((a,b)=> b.height-a.height);
-    for(const r of rowsSorted){
-      let ok=false;
-      for(const sh of sheets){
-        const need=(sh.rows.length?KERF:0)+r.height;
-        const usedH=sh.rows.reduce((s,rr)=> s+rr.height,0) + (sh.rows.length?KERF*(sh.rows.length):0);
-        if(usedH+need<=H){ sh.rows.push(r); ok=true; break; }
-      }
-      if(!ok) sheets.push({rows:[r]});
-    }
-
-    const outSheets=[], cutsSeq=[];
-    for(let si=0; si<sheets.length; si++){
-      const sh=sheets[si];
-      let y=MARGIN;
-      const placed=[]; const hCuts=[]; const vPerRow=[];
-      for(let ri=0; ri<sh.rows.length; ri++){
-        const row=sh.rows[ri];
-        if(ri>0) y+=KERF;
-        let x=MARGIN;
-        const xCuts=[];
-        for(let k=0;k<row.pieces.length;k++){
-          const it=row.pieces[k];
-          if(k>0) x+=KERF;
-          placed.push({id:it.id,x,y,w:it.w,h:it.h,w0:it.w0,h0:it.h0,rot:it.rot});
-          x+=it.w;
-          if(k<row.pieces.length-1) xCuts.push(x + KERF/2);
-        }
-        vPerRow.push({fila:ri+1,y0:y,y1:y+row.height,xCuts});
-        y+=row.height;
-        hCuts.push(y);
-      }
-      outSheets.push({placed});
-      cutsSeq.push({lamina:si+1,horizontales:hCuts,verticalesPorFila:vPerRow});
-    }
-    const areaNet=(W*H);
-    const waste=outSheets.reduce((t,sh)=> t + (areaNet - sh.placed.reduce((s,r)=>s+r.w*r.h,0)), 0);
-    return {count:outSheets.length,sheets:outSheets,waste,cutsSeq};
-  }
-
-  // ===== (5) Aplanar y validar =====
-  const piezas=[];
-  let gid=1;
-  for(const c of cortes) for(let i=0;i<c.cantidad;i++){
-    piezas.push({ id:gid++, w0:c.ancho, h0:c.alto, area:c.ancho*c.alto });
-  }
-  if(!piezas.length) return { numeroLaminas:0, plano:[], cortesSecuencia:[] };
-
-  const innerW = sheetW - 2*MARGIN;
-  const innerH = sheetH - 2*MARGIN;
-  const fitsAny = (p, W, H) =>
-    (p.w0<=W && p.h0<=H) || (ALLOW_PIECE_ROTATION && p.h0<=W && p.w0<=H);
-  const innerWrot = sheetH - 2*MARGIN, innerHrot = sheetW - 2*MARGIN;
-  for(const p of piezas){
-    const okN=fitsAny(p,innerW,innerH);
-    const okR= ALLOW_SHEET_ROTATION ? fitsAny(p,innerWrot,innerHrot) : false;
-    if(!okN && !okR) throw new Error(`La pieza ${p.w0}x${p.h0} no cabe en la lámina ${sheetW}x${sheetH} (margen ${MARGIN}).`);
-  }
-
-  // ===== (6) Caso idénticas + kerf=0 → exacto =====
-  if(KERF===0 && allIdentical(piezas)){
-    const w=piezas[0].w0, h=piezas[0].h0, N=piezas.length;
-    const patV=exactPatternCols(innerW,innerH,w,h,ALLOW_PIECE_ROTATION);
-    const patH=exactPatternRows(innerW,innerH,w,h,ALLOW_PIECE_ROTATION);
-    const bestPat = chooseBestPattern(patV,patH,innerW,innerH);
-    const cap=bestPat.cap;
-    const hojas=Math.ceil(N/cap);
-    const plano=[]; let used=0;
-    for(let s=0;s<hojas;s++){
-      const take=Math.min(cap,N-used);
-      const placed=renderExactPattern(bestPat,take,w,h,MARGIN,sheetW,sheetH);
-      plano.push({
-        numero:s+1,
-        cortes: placed.map((r,idx)=>({
-          id: piezas[used+idx]?.id ?? (used+idx+1),
-          ancho:r.w, alto:r.h, x:r.x, y:r.y,
-          descripcion:`${w}x${h}${r.rot?' (R)':''}`
+    
+    // --- Formateo de salida ---
+    const plano = chosen.sheets.map((sh, i) => ({
+        numero: i + 1,
+        cortes: sh.placed.map(r => ({
+            id: r.id, ancho: r.w, alto: r.h, x: r.x, y: r.y,
+            descripcion: `${r.w0}x${r.h0}${r.rot ? ' (R)' : ''}`
         }))
-      });
-      used+=take;
-    }
-    return { numeroLaminas:plano.length, plano, cortesSecuencia: bestPat.cutsSeq };
-  }
-
-  // ===== (7) Baseline mínimo de láminas (usa MRBin YA inicializada) =====
-  const base = maxRectsMulti(piezas, sheetW, sheetH, {
-    margin:MARGIN, kerf:KERF, heuristic:HEUR, allowRotate: ALLOW_PIECE_ROTATION
-  });
-  const baseSheets = base.count;
-
-  // ===== (8) Guillotina vertical/horizontal =====
-  const gVert = guillotineColumns(piezas, sheetW, sheetH, { margin:MARGIN, kerf:KERF, allowRotate: ALLOW_PIECE_ROTATION });
-  const gHorz = guillotineRows   (piezas, sheetW, sheetH, { margin:MARGIN, kerf:KERF, allowRotate: ALLOW_PIECE_ROTATION });
-
-  // Selección: siempre el que use MENOS láminas; si guillotina no iguala, usa baseline
-  const candidates = [];
-  if (gVert) candidates.push({ tag:'gV', ...gVert });
-  if (gHorz) candidates.push({ tag:'gH', ...gHorz });
-  candidates.push({ tag:'base', ...base });
-
-  candidates.sort((a,b)=> (a.count - b.count) || (a.waste - b.waste));
-
-  let chosen = null;
-  const equalOrBetter = candidates.filter(c => c.tag!=='base' && c.count <= baseSheets);
-  if(equalOrBetter.length){
-    if(PREFERENCE==='prefer-vertical'){
-      const prefer = equalOrBetter.find(c=>c.tag==='gV' && c.count===equalOrBetter[0].count);
-      chosen = prefer ?? equalOrBetter[0];
-    } else {
-      const prefer = equalOrBetter.find(c=>c.tag==='gH' && c.count===equalOrBetter[0].count);
-      chosen = prefer ?? equalOrBetter[0];
-    }
-  } else {
-    chosen = candidates.find(c=>c.tag==='base'); // asegura mínimo de láminas
-  }
-
-  const plano = chosen.sheets.map((sh,i)=>({
-    numero:i+1,
-    cortes: sh.placed.map(r=>({
-      id:r.id, ancho:r.w, alto:r.h, x:r.x, y:r.y,
-      descripcion:`${r.w0}x${r.h0}${r.rot?' (R)':''}`
-    }))
-  }));
-  const out = { numeroLaminas: chosen.count, plano };
-  if(chosen.cutsSeq) out.cortesSecuencia = chosen.cutsSeq;
-  return out;
+    }));
+    const out = { numeroLaminas: chosen.count, plano };
+    if (chosen.cutsSeq) out.cortesSecuencia = chosen.cutsSeq;
+    return out;
 }
 
 /**
