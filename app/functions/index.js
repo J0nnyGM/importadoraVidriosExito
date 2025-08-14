@@ -188,7 +188,7 @@ function generarPDF(remision, isForPlanta = false) {
 
     doc.setFontSize(10);
     doc.setFont("helvetica", "bold");
-    doc.text("PRISMACOLOR", 105, 28, { align: "center" });
+    doc.text("IMPORTADORA VIDRIOS EXITO", 105, 28, { align: "center" });
     doc.setFont("helvetica", "normal");
     const contactInfo = "Tels: 310 2557543 – 313 2522810";
     const address = "Cra 27A No. 68-80";
