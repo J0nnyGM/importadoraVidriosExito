@@ -5,6 +5,7 @@ const sgMail = require("@sendgrid/mail");
 const { jsPDF } = require("jspdf");
 require("jspdf-autotable");
 const axios = require("axios");
+const { getStorage } = require("firebase-admin/storage");
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib"); // <-- Nueva librería para dibujar
 
 admin.initializeApp();
@@ -102,7 +103,9 @@ function formatColombianPhone(phone) {
 }
 
 /**
- * --- NUEVO: Envía un mensaje de plantilla de WhatsApp con un documento. ---
+ * --- VERSIÓN CORREGIDA Y ROBUSTA ---
+ * Envía un mensaje de plantilla de WhatsApp con un documento.
+ * AÑADIDO: .trim() para limpiar espacios en blanco en las variables de texto.
  * @param {string} toPhoneNumber Número del destinatario en formato E.164.
  * @param {string} customerName Nombre del cliente para la plantilla.
  * @param {string} remisionNumber Número de la remisión.
@@ -113,57 +116,63 @@ function formatColombianPhone(phone) {
 async function sendWhatsAppRemision(toPhoneNumber, customerName, remisionNumber, status, pdfUrl) {
     const formattedPhone = formatColombianPhone(toPhoneNumber);
     if (!formattedPhone) {
-        throw new Error("Número de teléfono inválido o no proporcionado.");
+        throw new Error(`Número de teléfono inválido o no proporcionado: ${toPhoneNumber}`);
     }
 
     const API_VERSION = "v19.0";
     const url = `https://graph.facebook.com/${API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
 
+    // Nos aseguramos de que todos los parámetros sean strings para evitar errores de tipo.
     const payload = {
         messaging_product: "whatsapp",
         to: formattedPhone,
         type: "template",
         template: {
-            name: "envio_remision", // Asegúrate que este sea el nombre de tu plantilla aprobada
-            language: {
-                code: "es",
-            },
+            name: "envio_remision",
+            language: { code: "es" },
             components: [
                 {
                     type: "header",
-                    parameters: [
-                        {
-                            type: "document",
-                            document: {
-                                link: pdfUrl,
-                                filename: `Remision-${remisionNumber}.pdf`,
-                            },
+                    parameters: [{
+                        type: "document",
+                        document: {
+                            link: pdfUrl,
+                            filename: `Remision-${String(remisionNumber)}.pdf`,
                         },
-                    ],
+                    }],
                 },
                 {
                     type: "body",
                     parameters: [
-                        { type: "text", text: customerName },
-                        { type: "text", text: remisionNumber },
-                        { type: "text", text: status },
+                        { type: "text", text: String(customerName) },
+                        { type: "text", text: String(remisionNumber) },
+                        { type: "text", text: String(status) },
                     ],
                 },
             ],
         },
     };
 
-    console.log("Token que se está usando para WhatsApp:", WHATSAPP_TOKEN);
-
-
     const headers = {
         "Authorization": `Bearer ${WHATSAPP_TOKEN}`,
         "Content-Type": "application/json",
     };
 
-    return axios.post(url, payload, { headers });
+    // --- BLOQUE DE DEPURACIÓN ---
+    // Este bloque intentará enviar el mensaje y, si falla,
+    // registrará la respuesta de error completa de WhatsApp.
+    try {
+        const response = await axios.post(url, payload, { headers });
+        return response;
+    } catch (error) {
+        if (error.response) {
+            // Si hay una respuesta de error del servidor de WhatsApp, la registramos.
+            console.error("WhatsApp API Error Detallado:", JSON.stringify(error.response.data, null, 2));
+        }
+        // Lanzamos un error más informativo.
+        throw new Error(`Falló el envío de WhatsApp a ${toPhoneNumber}: ${error.message}`);
+    }
 }
-
 
 /**
  * Función para generar un PDF de la remisión.
@@ -311,6 +320,29 @@ function generarPDF(remision, isForPlanta = false) {
     return Buffer.from(doc.output("arraybuffer"));
 }
 
+// AGREGA ESTA NUEVA FUNCIÓN
+exports.getSignedUrlForPath = functions.https.onCall(async (data, context) => {
+    if (!context.auth) {
+        throw new functions.https.HttpsError("unauthenticated", "El usuario no está autenticado.");
+    }
+    const filePath = data.path;
+    if (!filePath) {
+        throw new functions.https.HttpsError("invalid-argument", "La ruta del archivo es requerida.");
+    }
+
+    try {
+        const bucket = getStorage().bucket(BUCKET_NAME);
+        const file = bucket.file(filePath);
+        const [url] = await file.getSignedUrl({
+            action: "read",
+            expires: Date.now() + 15 * 60 * 1000, // La URL expira en 15 minutos
+        });
+        return { url: url };
+    } catch (error) {
+        functions.logger.error(`Error al generar URL para ${filePath}:`, error);
+        throw new functions.https.HttpsError("internal", "No se pudo obtener la URL del archivo.");
+    }
+});
 
 exports.onRemisionCreate = functions.region("us-central1").firestore
     .document("remisiones/{remisionId}")
@@ -321,17 +353,19 @@ exports.onRemisionCreate = functions.region("us-central1").firestore
         const remisionId = context.params.remisionId;
         const log = (message) => functions.logger.log(`[${remisionId}] ${message}`);
 
-        log("Ejecutando v4 - Despliegue Limpio");
+        log("Iniciando creación de remisión y notificaciones...");
 
         let emailStatus = "pending";
         let whatsappStatus = "pending";
 
         try {
+            // 1. Generar ambos PDFs
             const pdfBuffer = generarPDF(remisionData, false);
             log("PDF de cliente generado.");
             const pdfPlantaBuffer = generarPDF(remisionData, true);
             log("PDF de planta generado.");
 
+            // 2. Definir rutas y guardar en Firebase Storage
             const bucket = admin.storage().bucket(BUCKET_NAME);
             const filePath = `remisiones/${remisionData.numeroRemision}.pdf`;
             const file = bucket.file(filePath);
@@ -343,13 +377,14 @@ exports.onRemisionCreate = functions.region("us-central1").firestore
             await filePlanta.save(pdfPlantaBuffer, { metadata: { contentType: "application/pdf" } });
             log(`PDF de planta guardado en Storage: ${filePathPlanta}`);
 
-            const [url] = await file.getSignedUrl({ action: "read", expires: "03-09-2491" });
-            const [urlPlanta] = await filePlanta.getSignedUrl({ action: "read", expires: "03-09-2491" });
-            log("URLs públicas de PDFs obtenidas.");
+            // 3. Actualizar Firestore con las rutas (no las URLs)
+            await snap.ref.update({
+                pdfPath: filePath,
+                pdfPlantaPath: filePathPlanta,
+            });
+            log("Rutas de PDF guardadas en Firestore.");
 
-            await snap.ref.update({ pdfUrl: url, pdfPlantaUrl: urlPlanta });
-
-            // --- Lógica de envío de Correo Electrónico al cliente ---
+            // 4. Enviar correo electrónico al cliente con el PDF adjunto
             try {
                 const msg = {
                     to: remisionData.clienteEmail,
@@ -371,10 +406,10 @@ exports.onRemisionCreate = functions.region("us-central1").firestore
                 emailStatus = "error";
             }
 
-            // --- Lógica de envío a Impresora ---
+            // 5. Enviar copia para impresión
             try {
                 const printerMsg = {
-                    to: "oficinavidriosexito@print.brother.com", // <-- CORRECCIÓN APLICADA
+                    to: "oficinavidriosexito@print.brother.com",
                     from: FROM_EMAIL,
                     subject: `Nueva Remisión N° ${remisionData.numeroRemision} para Imprimir`,
                     html: `<p>Se ha generado la remisión N° ${remisionData.numeroRemision}. Adjunto para impresión.</p>`,
@@ -391,23 +426,25 @@ exports.onRemisionCreate = functions.region("us-central1").firestore
                 log("Error al enviar a la impresora:", printerError);
             }
 
-            // --- Lógica de envío de WhatsApp (Corregida para ambos números) ---
+            // 6. Enviar notificación por WhatsApp
             try {
                 const clienteDoc = await admin.firestore().collection("clientes").doc(remisionData.idCliente).get();
                 if (clienteDoc.exists) {
                     const clienteData = clienteDoc.data();
-                    const telefonos = [clienteData.telefono1, clienteData.telefono2].filter(Boolean); // Filtra para no tener valores nulos
+                    const telefonos = [clienteData.telefono1, clienteData.telefono2].filter(Boolean);
 
                     if (telefonos.length > 0) {
-                        // Usamos Promise.allSettled para intentar enviar a todos los números sin que un error detenga a los otros
+                        // Generar una URL temporal solo para el mensaje de WhatsApp (válida por 24 horas)
+                        const [tempUrl] = await file.getSignedUrl({ action: "read", expires: Date.now() + 24 * 60 * 60 * 1000 });
+
                         const sendPromises = telefonos.map(telefono =>
                             sendWhatsAppRemision(
                                 telefono,
                                 remisionData.clienteNombre,
                                 remisionData.numeroRemision.toString(),
                                 remisionData.estado,
-                                url
-                            ).catch(e => Promise.reject({ phone: telefono, error: e.message })) // Rechaza con info para logs
+                                tempUrl // Usamos la URL temporal
+                            ).catch(e => Promise.reject({ phone: telefono, error: e.message }))
                         );
 
                         const results = await Promise.allSettled(sendPromises);
@@ -421,12 +458,12 @@ exports.onRemisionCreate = functions.region("us-central1").firestore
                             }
                         });
 
+                        if (successfulSends > 0) whatsappStatus = "sent_partial";
                         if (successfulSends === telefonos.length) whatsappStatus = "sent_all";
-                        else if (successfulSends > 0) whatsappStatus = "sent_partial";
-                        else whatsappStatus = "error";
+                        if (successfulSends === 0) whatsappStatus = "error";
 
                     } else {
-                        log("El cliente no tiene ningún número de teléfono registrado.");
+                        log("El cliente no tiene números de teléfono registrados.");
                         whatsappStatus = "no_phone";
                     }
                 } else {
@@ -438,16 +475,18 @@ exports.onRemisionCreate = functions.region("us-central1").firestore
                 whatsappStatus = "error";
             }
 
+            // 7. Actualizar el estado final de las notificaciones
             return snap.ref.update({
                 emailStatus: emailStatus,
                 whatsappStatus: whatsappStatus,
             });
 
         } catch (error) {
-            functions.logger.error(`[${remisionId}] Error General:`, error);
+            functions.logger.error(`[${remisionId}] Error General en onRemisionCreate:`, error);
             return snap.ref.update({
                 emailStatus: "error",
                 whatsappStatus: "error",
+                errorLog: error.message,
             });
         }
     });
@@ -480,7 +519,7 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
                     return;
                 }
 
-                log(`Iniciando envío de notificaciones (${motivo}) a ${telefonos.join(', ')}`);
+                log(`Iniciando envío de notificaciones (${motivo}) a ${telefonos.join(", ")}`);
 
                 const sendPromises = telefonos.map(telefono =>
                     sendWhatsAppRemision(
@@ -488,13 +527,13 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
                         afterData.clienteNombre,
                         afterData.numeroRemision.toString(),
                         afterData.estado,
-                        pdfUrlToSend
-                    ).catch(e => Promise.reject({ phone: telefono, error: e.message }))
+                        pdfUrlToSend,
+                    ).catch(e => Promise.reject({ phone: telefono, error: e.message })),
                 );
 
                 const results = await Promise.allSettled(sendPromises);
                 results.forEach((result, index) => {
-                    if (result.status === 'fulfilled') {
+                    if (result.status === "fulfilled") {
                         log(`Notificación de ${motivo} enviada a ${telefonos[index]}.`);
                     } else {
                         functions.logger.error(`Falló envío de notificación (${motivo}) a ${result.reason.phone}:`, result.reason.error);
@@ -506,7 +545,7 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
             }
         };
 
-        // Disparador para anulación
+        // --- Gatillo para ANULACIÓN ---
         if (beforeData.estado !== "Anulada" && afterData.estado === "Anulada") {
             log("Detectada anulación. Generando PDF y enviando notificaciones.");
             try {
@@ -520,23 +559,20 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
                 await file.save(pdfBuffer, { metadata: { contentType: "application/pdf" } });
 
                 const filePathPlanta = `remisiones/planta-${afterData.numeroRemision}.pdf`;
-                const filePlanta = bucket.file(filePathPlanta);
-                await filePlanta.save(pdfPlantaBuffer, { metadata: { contentType: "application/pdf" } });
+                await bucket.file(filePathPlanta).save(pdfPlantaBuffer, { metadata: { contentType: "application/pdf" } });
 
-                const [url] = await file.getSignedUrl({ action: "read", expires: "03-09-2491" });
-                const [urlPlanta] = await filePlanta.getSignedUrl({ action: "read", expires: "03-09-2491" });
+                // Se guardan las rutas, no las URLs
+                await change.after.ref.update({ pdfPath: filePath, pdfPlantaPath: filePathPlanta });
+                log("Rutas de PDFs de anulación actualizadas en Storage y Firestore.");
 
-                await change.after.ref.update({ pdfUrl: url, pdfPlantaUrl: urlPlanta });
-                log("PDFs de anulación actualizados en Storage y Firestore.");
+                // Generar URL temporal para la notificación
+                const [tempUrl] = await file.getSignedUrl({ action: "read", expires: Date.now() + 24 * 60 * 60 * 1000 }); // Válida por 24 horas
 
                 const msg = {
                     to: afterData.clienteEmail,
                     from: FROM_EMAIL,
                     subject: `Anulación de Remisión N° ${afterData.numeroRemision}`,
-                    html: `<p>Hola ${afterData.clienteNombre},</p>
-                    <p>Te informamos que la remisión N° <strong>${afterData.numeroRemision}</strong> ha sido anulada.</p>
-                    <p>Adjuntamos una copia del documento anulado para tus registros.</p>
-                    <p><strong>Importadora Vidrios Exito</strong></p>`,
+                    html: `<p>Hola ${afterData.clienteNombre},</p><p>Te informamos que la remisión N° <strong>${afterData.numeroRemision}</strong> ha sido anulada.</p><p>Adjuntamos una copia del documento anulado para tus registros.</p><p><strong>Importadora Vidrios Exito</strong></p>`,
                     attachments: [{
                         content: pdfBuffer.toString("base64"),
                         filename: `Remision-ANULADA-${afterData.numeroRemision}.pdf`,
@@ -546,15 +582,16 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
                 };
                 await sgMail.send(msg);
                 log(`Correo de anulación con PDF enviado a ${afterData.clienteEmail}.`);
-                await sendNotifications("Anulación", url);
+                await sendNotifications("Anulación", tempUrl);
+
             } catch (error) {
                 log("Error al procesar anulación:", error);
             }
         }
 
-        // Disparador para "Entregado"
+        // --- Gatillo para "ENTREGADO" ---
         if (beforeData.estado !== "Entregado" && afterData.estado === "Entregado") {
-            log("Detectado cambio a 'Entregado'. Generando PDF y enviando correo.");
+            log("Detectado cambio a 'Entregado'. Generando PDF y enviando notificaciones.");
             try {
                 const pdfBuffer = generarPDF(afterData, false);
                 log("PDF de entrega generado.");
@@ -563,20 +600,19 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
                 const filePath = `remisiones/${afterData.numeroRemision}.pdf`;
                 const file = bucket.file(filePath);
                 await file.save(pdfBuffer, { metadata: { contentType: "application/pdf" } });
-                log(`PDF actualizado en Storage en: ${filePath}`);
 
-                const [url] = await file.getSignedUrl({ action: "read", expires: "03-09-2491" });
-                await change.after.ref.update({ pdfUrl: url });
+                // Se actualiza la ruta (aunque sea la misma) para asegurar consistencia
+                await change.after.ref.update({ pdfPath: filePath });
+                log(`PDF actualizado en Storage: ${filePath}`);
+
+                // Generar URL temporal para la notificación
+                const [tempUrl] = await file.getSignedUrl({ action: "read", expires: Date.now() + 24 * 60 * 60 * 1000 });
 
                 const msg = {
                     to: afterData.clienteEmail,
                     from: FROM_EMAIL,
                     subject: `Tu orden N° ${afterData.numeroRemision} ha sido entregada`,
-                    html: `<p>Hola ${afterData.clienteNombre},</p>
-                    <p>Te informamos que tu orden N° <strong>${afterData.numeroRemision}</strong> ha sido completada y marcada como <strong>entregada</strong>.</p>
-                    <p>Adjuntamos una copia final de la remisión para tus registros.</p>
-                    <p>¡Gracias por tu preferencia!</p>
-                    <p><strong>Importadora Vidrios Exito</strong></p>`,
+                    html: `<p>Hola ${afterData.clienteNombre},</p><p>Te informamos que tu orden N° <strong>${afterData.numeroRemision}</strong> ha sido completada y marcada como <strong>entregada</strong>.</p><p>Adjuntamos una copia final de la remisión para tus registros.</p><p>¡Gracias por tu preferencia!</p><p><strong>Importadora Vidrios Exito</strong></p>`,
                     attachments: [{
                         content: pdfBuffer.toString("base64"),
                         filename: `Remision-ENTREGADA-${afterData.numeroRemision}.pdf`,
@@ -586,13 +622,14 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
                 };
                 await sgMail.send(msg);
                 log(`Correo de entrega enviado a ${afterData.clienteEmail}.`);
-                await sendNotifications("Entrega", url);
+                await sendNotifications("Entrega", tempUrl);
+
             } catch (error) {
-                log("Error al enviar correo de entrega:", error);
+                log("Error al procesar entrega:", error);
             }
         }
 
-        // Disparador para PAGO FINAL
+        // --- Gatillo para PAGO FINAL ---
         const totalPagadoAntes = (beforeData.payments || []).filter((p) => p.status === "confirmado").reduce((sum, p) => sum + p.amount, 0);
         const totalPagadoDespues = (afterData.payments || []).filter((p) => p.status === "confirmado").reduce((sum, p) => sum + p.amount, 0);
 
@@ -607,11 +644,9 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
                 const filePath = `remisiones/${afterData.numeroRemision}.pdf`;
                 const file = bucket.file(filePath);
                 await file.save(pdfBuffer, { metadata: { contentType: "application/pdf" } });
-                log(`PDF de pago final actualizado en Storage: ${filePath}`);
 
-                const [url] = await file.getSignedUrl({ action: "read", expires: "03-09-2491" });
-                await change.after.ref.update({ pdfUrl: url, formaPago: "Cancelado" });
-                log("URL del PDF y forma de pago actualizados en Firestore.");
+                await change.after.ref.update({ pdfPath: filePath, formaPago: "Cancelado" });
+                log("Ruta del PDF y forma de pago actualizados en Firestore.");
 
                 const ultimoPago = afterData.payments[afterData.payments.length - 1];
 
@@ -619,12 +654,7 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
                     to: afterData.clienteEmail,
                     from: FROM_EMAIL,
                     subject: `Confirmación de Pago Total - Remisión N° ${afterData.numeroRemision}`,
-                    html: `<p>Hola ${afterData.clienteNombre},</p>
-                    <p>Hemos recibido el pago final para tu remisión N° <strong>${afterData.numeroRemision}</strong>.</p>
-                    <p>El valor total ha sido cancelado. Último pago registrado por ${ultimoPago.method}.</p>
-                    <p>Adjuntamos la remisión actualizada para tus registros.</p>
-                    <p>¡Gracias por tu confianza!</p>
-                    <p><strong>Importadora Vidrios Exito</strong></p>`,
+                    html: `<p>Hola ${afterData.clienteNombre},</p><p>Hemos recibido el pago final para tu remisión N° <strong>${afterData.numeroRemision}</strong>.</p><p>El valor total ha sido cancelado. Último pago registrado por ${ultimoPago.method}.</p><p>Adjuntamos la remisión actualizada para tus registros.</p><p>¡Gracias por tu confianza!</p><p><strong>Importadora Vidrios Exito</strong></p>`,
                     attachments: [{
                         content: pdfBuffer.toString("base64"),
                         filename: `Remision-CANCELADA-${afterData.numeroRemision}.pdf`,
@@ -634,6 +664,7 @@ exports.onRemisionUpdate = functions.region("us-central1").firestore
                 };
                 await sgMail.send(msg);
                 log(`Correo de pago final enviado a ${afterData.clienteEmail}.`);
+
             } catch (error) {
                 log("Error al procesar el pago final:", error);
             }

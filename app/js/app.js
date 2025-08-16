@@ -677,7 +677,7 @@ function setupEventListeners() {
         remisionForm.addEventListener('submit', handleRemisionSubmit);
         document.getElementById('incluir-iva').addEventListener('input', calcularTotales);
     }
-    
+
     // 4. LISTENERS PARA BOTONES PRINCIPALES Y FORMULARIOS DE CREACIÓN
     document.getElementById('add-importacion-btn').addEventListener('click', () => showImportacionModal());
     document.getElementById('add-nacional-btn').addEventListener('click', () => showNacionalModal());
@@ -709,7 +709,7 @@ function setupEventListeners() {
     document.getElementById('summary-btn').addEventListener('click', showDashboardModal);
     document.getElementById('edit-profile-btn').addEventListener('click', showEditProfileModal);
     document.getElementById('loan-request-btn').addEventListener('click', showLoanRequestModal);
-    
+
     // 5. LISTENERS PARA ACCIONES DENTRO DE LAS LISTAS (BOTONES DE EDITAR, GESTIONAR, ETC.)
     const itemsList = document.getElementById('items-list');
     if (itemsList) {
@@ -720,22 +720,22 @@ function setupEventListeners() {
             }
         });
     }
-const empleadosView = document.getElementById('view-empleados');
-if (empleadosView) {
-    empleadosView.addEventListener('click', async (e) => {
-        const target = e.target;
-        if (target.classList.contains('user-status-btn')) {
-            const uid = target.dataset.uid;
-            const newStatus = target.dataset.status;
-            if (confirm(`¿Estás seguro de que quieres cambiar el estado de este usuario a "${newStatus}"?`)) {
-                try {
-                    await updateDoc(doc(db, "users", uid), { status: newStatus });
-                    showTemporaryMessage("Estado del usuario actualizado.", "success");
-                } catch (error) {
-                    showTemporaryMessage("No se pudo actualizar el estado.", "error");
+    const empleadosView = document.getElementById('view-empleados');
+    if (empleadosView) {
+        empleadosView.addEventListener('click', async (e) => {
+            const target = e.target;
+            if (target.classList.contains('user-status-btn')) {
+                const uid = target.dataset.uid;
+                const newStatus = target.dataset.status;
+                if (confirm(`¿Estás seguro de que quieres cambiar el estado de este usuario a "${newStatus}"?`)) {
+                    try {
+                        await updateDoc(doc(db, "users", uid), { status: newStatus });
+                        showTemporaryMessage("Estado del usuario actualizado.", "success");
+                    } catch (error) {
+                        showTemporaryMessage("No se pudo actualizar el estado.", "error");
+                    }
                 }
             }
-        }
             if (target.classList.contains('manage-user-btn')) {
                 showAdminEditUserModal(JSON.parse(target.dataset.userJson));
             }
@@ -748,7 +748,7 @@ if (empleadosView) {
     document.getElementById('search-proveedores').addEventListener('input', renderProveedores);
     document.getElementById('search-gastos').addEventListener('input', renderGastos);
     document.getElementById('search-items').addEventListener('input', renderItems);
-    
+
     populateDateFilters('filter-remisiones');
     populateDateFilters('filter-gastos');
     document.getElementById('filter-remisiones-month').addEventListener('change', renderRemisiones);
@@ -773,13 +773,13 @@ function switchView(viewName, tabs, views) {
 function renderAndAttachEmployeeListeners(users) {
     const empleadosListEl = document.getElementById('empleados-list');
     if (!empleadosListEl) return;
-    
+
     empleadosListEl.innerHTML = '';
 
     users.filter(u => u.id !== currentUser.uid).forEach(empleado => {
         const el = document.createElement('div');
         el.className = 'border p-4 rounded-lg flex flex-col sm:flex-row justify-between items-center gap-4';
-        
+
         let statusBadge = '';
         let toggleButtonHTML = '';
 
@@ -850,19 +850,19 @@ function renderAndAttachEmployeeListeners(users) {
 
 function loadEmpleados() {
     if (!currentUserData || currentUserData.role !== 'admin') {
-        return () => {}; // Salir si no es admin
+        return () => { }; // Salir si no es admin
     }
     const q = query(collection(db, "users"), orderBy("nombre"));
-    
+
     return onSnapshot(q, (snapshot) => {
         allUsers = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        
+
         // Ordenar para que los pendientes/inactivos aparezcan primero
         const sortedUsers = [...allUsers].sort((a, b) => {
             const statusOrder = { 'pending': 1, 'inactive': 2, 'active': 3 };
             return (statusOrder[a.status] || 99) - (statusOrder[b.status] || 99);
         });
-        
+
         // Llamar a la función que dibuja y asigna los listeners
         renderAndAttachEmployeeListeners(sortedUsers);
     });
@@ -1201,7 +1201,6 @@ function renderRemisiones() {
     const remisionesListEl = document.getElementById('remisiones-list');
     if (!remisionesListEl) return;
 
-    const isAdmin = currentUserData && currentUserData.role === 'admin';
     const isPlanta = currentUserData && currentUserData.role === 'planta';
     const month = document.getElementById('filter-remisiones-month').value;
     const year = document.getElementById('filter-remisiones-year').value;
@@ -1224,8 +1223,14 @@ function renderRemisiones() {
         filtered = filtered.filter(r => r.clienteNombre.toLowerCase().includes(searchTerm) || r.numeroRemision.toString().includes(searchTerm));
     }
 
+    filtered.sort((a, b) => new Date(b.fechaRecibido) - new Date(a.fechaRecibido));
+
     remisionesListEl.innerHTML = '';
-    if (filtered.length === 0) { remisionesListEl.innerHTML = '<p class="text-center text-gray-500 py-8">No se encontraron remisiones.</p>'; return; }
+    if (filtered.length === 0) {
+        remisionesListEl.innerHTML = '<p class="text-center text-gray-500 py-8">No se encontraron remisiones.</p>';
+        return;
+    }
+
     filtered.forEach((remision) => {
         const el = document.createElement('div');
         const esAnulada = remision.estado === 'Anulada';
@@ -1233,34 +1238,34 @@ function renderRemisiones() {
         el.className = `border p-4 rounded-lg flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 ${esAnulada ? 'remision-anulada' : ''}`;
 
         const totalPagadoConfirmado = (remision.payments || []).filter(p => p.status === 'confirmado').reduce((sum, p) => sum + p.amount, 0);
-        const totalAbonado = (remision.payments || []).reduce((sum, p) => sum + p.amount, 0);
         const saldoPendiente = remision.valorTotal - totalPagadoConfirmado;
 
         let paymentStatusBadge = '';
         if (!esAnulada) {
             if (saldoPendiente <= 0) {
                 paymentStatusBadge = `<span class="payment-status payment-pagado">Pagado</span>`;
-            } else if (isPlanta) {
-                paymentStatusBadge = `<span class="payment-status payment-pendiente">Pendiente</span>`;
-            } else if (totalAbonado > 0) {
+            } else if (totalPagadoConfirmado > 0) {
                 paymentStatusBadge = `<span class="payment-status payment-abono">Abono</span>`;
             } else {
                 paymentStatusBadge = `<span class="payment-status payment-pendiente">Pendiente</span>`;
             }
         }
 
-        const pdfUrl = isPlanta ? remision.pdfPlantaUrl : remision.pdfUrl;
-        const pdfButton = pdfUrl ? `<button data-pdf-url="${pdfUrl}" data-remision-num="${remision.numeroRemision}" class="view-pdf-btn w-full bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-700 transition text-center">Ver Remisión</button>` : `<button class="w-full bg-gray-400 text-white px-4 py-2 rounded-lg text-sm font-semibold btn-disabled">Generando PDF...</button>`;
-
-        const anularButton = (esAnulada || esEntregada || isPlanta || (remision.payments && remision.payments.length > 0))
-            ? ''
-            : `<button data-remision-id="${remision.id}" class="anular-btn w-full bg-yellow-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-yellow-600 transition">Anular</button>`;
-
+        const pdfPath = isPlanta ? remision.pdfPlantaPath : remision.pdfPath;
+        const pdfButton = `<button data-pdf-path="${pdfPath || ''}" data-remision-num="${remision.numeroRemision}" class="view-pdf-btn w-full bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-700 transition text-center">Ver Remisión</button>`;
+        
+        const anularButton = (esAnulada || esEntregada || isPlanta || (remision.payments && remision.payments.length > 0)) ? '' : `<button data-remision-id="${remision.id}" class="anular-btn w-full bg-yellow-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-yellow-600 transition">Anular</button>`;
+        
         const pagosButton = esAnulada || isPlanta ? '' : `<button data-remision-json='${JSON.stringify(remision)}' class="payment-btn w-full bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-purple-700 transition">Pagos (${formatCurrency(saldoPendiente)})</button>`;
-
-        const descuentoButton = (esAnulada || esEntregada || isPlanta || remision.discount)
-            ? ''
-            : `<button data-remision-json='${JSON.stringify(remision)}' class="discount-btn w-full bg-cyan-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-cyan-600 transition">Descuento</button>`;
+        
+        // --- LÓGICA DEL BOTÓN DE DESCUENTO RESTAURADA ---
+        const descuentoButton = (esAnulada || esEntregada || isPlanta || remision.discount) ? '' : `<button data-remision-json='${JSON.stringify(remision)}' class="discount-btn w-full bg-cyan-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-cyan-600 transition">Descuento</button>`;
+        
+        let discountInfo = '';
+        if (remision.discount && remision.discount.percentage > 0) {
+            discountInfo = `<span class="text-xs font-semibold bg-cyan-100 text-cyan-800 px-2 py-1 rounded-full">DTO ${remision.discount.percentage.toFixed(2)}%</span>`;
+        }
+        // --- FIN DE LA RESTAURACIÓN ---
 
         const statusClasses = { 'Recibido': 'status-recibido', 'En Proceso': 'status-en-proceso', 'Procesado': 'status-procesado', 'Entregado': 'status-entregado' };
         const statusBadge = `<span class="status-badge ${statusClasses[remision.estado] || ''}">${remision.estado}</span>`;
@@ -1270,11 +1275,6 @@ function renderRemisiones() {
         if (!esAnulada && currentIndex < ESTADOS_REMISION.length - 1) {
             const nextStatus = ESTADOS_REMISION[currentIndex + 1];
             statusButton = `<button data-remision-id="${remision.id}" data-current-status="${remision.estado}" class="status-update-btn w-full bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-600 transition">Mover a ${nextStatus}</button>`;
-        }
-
-        let discountInfo = '';
-        if (remision.discount && remision.discount.percentage > 0) {
-            discountInfo = `<span class="text-xs font-semibold bg-cyan-100 text-cyan-800 px-2 py-1 rounded-full">DTO ${remision.discount.percentage.toFixed(2)}%</span>`;
         }
 
         el.innerHTML = `
@@ -1299,10 +1299,13 @@ function renderRemisiones() {
             </div>`;
         remisionesListEl.appendChild(el);
     });
-    document.querySelectorAll('.anular-btn').forEach(button => button.addEventListener('click', (e) => { const remisionId = e.currentTarget.dataset.remisionId; if (confirm(`¿Estás seguro de que quieres ANULAR esta remisión? Se enviará un correo de notificación al cliente.`)) { handleAnularRemision(remisionId); } }));
+    
+    // Reasignar listeners
+    document.querySelectorAll('.anular-btn').forEach(button => button.addEventListener('click', (e) => { const remisionId = e.currentTarget.dataset.remisionId; if (confirm(`¿Estás seguro de que quieres ANULAR esta remisión?`)) { handleAnularRemision(remisionId); } }));
     document.querySelectorAll('.status-update-btn').forEach(button => button.addEventListener('click', (e) => { const remisionId = e.currentTarget.dataset.remisionId; const currentStatus = e.currentTarget.dataset.currentStatus; handleStatusUpdate(remisionId, currentStatus); }));
-    document.querySelectorAll('.view-pdf-btn').forEach(button => button.addEventListener('click', (e) => { const pdfUrl = e.currentTarget.dataset.pdfUrl; const remisionNum = e.currentTarget.dataset.remisionNum; showPdfModal(pdfUrl, `Remisión N° ${remisionNum}`); }));
+    document.querySelectorAll('.view-pdf-btn').forEach(button => button.addEventListener('click', (e) => { handleViewPdf(e.currentTarget.dataset.pdfPath, e.currentTarget.dataset.remisionNum); }));
     document.querySelectorAll('.payment-btn').forEach(button => button.addEventListener('click', (e) => { const remision = JSON.parse(e.currentTarget.dataset.remisionJson); showPaymentModal(remision); }));
+    // Listener para el botón de descuento restaurado
     document.querySelectorAll('.discount-btn').forEach(button => button.addEventListener('click', (e) => { const remision = JSON.parse(e.currentTarget.dataset.remisionJson); showDiscountModal(remision); }));
 }
 function loadGastos() {
@@ -2379,7 +2382,7 @@ async function handleAbonoChinaSubmit(importacionId, buttonElement) {
         showModalMessage("Error: Faltan campos en el formulario de abono.");
         return;
     }
-    
+
     const valorCOP = unformatCurrency(valorCopInput.value);
     const valorUSD = unformatCurrency(valorUsdInput.value, true);
 
@@ -2390,7 +2393,7 @@ async function handleAbonoChinaSubmit(importacionId, buttonElement) {
 
     const importacionActual = allImportaciones.find(i => i.id === importacionId);
     if (!importacionActual) return showModalMessage("Error: No se pudo encontrar la importación actual.");
-    
+
     const totalChinaUSD = importacionActual.totalChinaUSD || 0;
     const totalAbonadoUSD = (importacionActual.abonos || []).reduce((sum, abono) => sum + (abono.valorUSD || 0), 0);
     const saldoPendienteUSD = totalChinaUSD - totalAbonadoUSD;
@@ -2421,7 +2424,7 @@ async function handleAbonoChinaSubmit(importacionId, buttonElement) {
             if (!allImportaciones[importacionIndex].abonos) allImportaciones[importacionIndex].abonos = [];
             allImportaciones[importacionIndex].abonos.push(nuevoAbono);
         }
-        
+
         hideModal();
         showTemporaryMessage("Abono registrado con éxito.", "success");
         showImportacionModal(allImportaciones[importacionIndex]);
@@ -2800,7 +2803,7 @@ function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
     }
 
     function allIdentical(arr) { const a = arr[0]; return arr.every(p => p.w0 === a.w0 && p.h0 === a.h0); }
-    
+
     function exactPatternCols(W, H, w, h, allowRotate) {
         const rowsU = Math.floor(H / h), rowsR = allowRotate ? Math.floor(H / w) : 0;
         let best = { cap: 0, c: 0, d: 0, modo: 'cols' };
@@ -2813,7 +2816,7 @@ function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
         best.cutsSeq = [{ lamina: 1, verticales: [] }];
         return best;
     }
-    
+
     function exactPatternRows(W, H, w, h, allowRotate) {
         const colsU = Math.floor(W / w), colsR = allowRotate ? Math.floor(W / h) : 0;
         let best = { cap: 0, a: 0, b: 0, modo: 'rows' };
@@ -2935,7 +2938,7 @@ function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
                 }
                 hPerCol.push({ columna: ci + 1, x0: x, x1: x + col.width, yCuts });
                 x += col.width;
-                if( ci < sh.cols.length -1 ) vCuts.push(x);
+                if (ci < sh.cols.length - 1) vCuts.push(x);
             }
             outSheets.push({ placed });
             cutsSeq.push({ lamina: si + 1, verticales: vCuts, horizontalesPorColumna: hPerCol });
@@ -2995,7 +2998,7 @@ function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
             }
             if (!ok) sheets.push({ rows: [r] });
         }
-        
+
         const outSheets = [], cutsSeq = [];
         for (let si = 0; si < sheets.length; si++) {
             const sh = sheets[si];
@@ -3015,7 +3018,7 @@ function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
                 }
                 vPerRow.push({ fila: ri + 1, y0: y, y1: y + row.height, xCuts });
                 y += row.height;
-                if(ri < sh.rows.length - 1) hCuts.push(y);
+                if (ri < sh.rows.length - 1) hCuts.push(y);
             }
             outSheets.push({ placed });
             cutsSeq.push({ lamina: si + 1, horizontales: hCuts, verticalesPorFila: vPerRow });
@@ -3068,7 +3071,7 @@ function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
     const gVert = guillotineColumns(piezas, sheetW, sheetH, { margin: MARGIN, kerf: KERF, allowRotate: ALLOW_PIECE_ROTATION });
     const gHorz = guillotineRows(piezas, sheetW, sheetH, { margin: MARGIN, kerf: KERF, allowRotate: ALLOW_PIECE_ROTATION });
     const baseSheets = base ? base.count : Infinity;
-    
+
     const candidates = [];
     if (gVert) candidates.push({ tag: 'gV', ...gVert });
     if (gHorz) candidates.push({ tag: 'gH', ...gHorz });
@@ -3091,9 +3094,9 @@ function optimizarCortes(sheetW, sheetH, cortes, opts = {}) {
     }
 
     if (!chosen) {
-      return { numeroLaminas: Infinity, plano: [], error: "No se encontró una solución de corte." };
+        return { numeroLaminas: Infinity, plano: [], error: "No se encontró una solución de corte." };
     }
-    
+
     // --- Formateo de salida ---
     const plano = chosen.sheets.map((sh, i) => ({
         numero: i + 1,
@@ -5631,7 +5634,7 @@ function showFacturaModal(remisionId) {
     `;
     document.getElementById('modal').classList.remove('hidden');
     document.getElementById('close-factura-modal').addEventListener('click', hideModal);
-    
+
     document.getElementById('factura-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const numeroFactura = document.getElementById('factura-numero').value;
@@ -6277,4 +6280,27 @@ async function handleUpdateFacturaPdf(importacionId, gastoTipo, facturaId) {
         showModalMessage(`Error al guardar PDF: ${error.message}`);
     }
 }
-
+/**
+ * --- NUEVA FUNCIÓN OPTIMIZADA ---
+ * Llama a una Cloud Function para obtener una URL segura y de corta duración
+ * para un archivo en Storage y luego la abre.
+ * @param {string} filePath - La ruta del archivo en Firebase Storage.
+ * @param {string} remisionNum - El número de la remisión para el título del modal.
+ */
+async function handleViewPdf(filePath, remisionNum) {
+    if (!filePath) {
+        showModalMessage("Error: Esta remisión no tiene un PDF asociado.");
+        return;
+    }
+    showModalMessage("Generando enlace seguro...", true);
+    try {
+        const getUrlFunction = httpsCallable(functions, 'getSignedUrlForPath');
+        const result = await getUrlFunction({ path: filePath });
+        const { url } = result.data;
+        hideModal();
+        showPdfModal(url, `Remisión N° ${remisionNum}`);
+    } catch (error) {
+        console.error("Error al obtener la URL del PDF:", error);
+        showModalMessage("No se pudo cargar el PDF. Inténtalo de nuevo.");
+    }
+}
